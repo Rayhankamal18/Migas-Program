@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gambar Sumur</title>
+  <link rel="stylesheet" href="shared/styles.css" />
+  <link rel="stylesheet" href="azimuth/azimuth.css" />
+  <link rel="stylesheet" href="casing/casing.css" />
+  <link rel="stylesheet" href="drilling/drilling.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1 id="app-title">Chart Azimuth &amp; Inklinasi</h1>
+      <nav class="tabs" role="tablist" aria-label="Fitur">
+        <button type="button" class="tab" id="tab-azimuth" role="tab" aria-selected="true" aria-controls="panel-azimuth">Azimuth Polar Chart</button>
+        <button type="button" class="tab" id="tab-casing" role="tab" aria-selected="false" aria-controls="panel-casing">Casing Setting Depth</button>
+        <button type="button" class="tab" id="tab-drilling" role="tab" aria-selected="false" aria-controls="panel-drilling">Drilling Summary</button>
+      </nav>
+    </div>
+    <div class="top-actions-wrap">
+      <div class="top-actions">
+        <button type="button" class="btn ghost" id="btn-open-project">Buka</button>
+        <button type="button" class="btn" id="btn-save-project">Simpan</button>
+        <input id="project-file" type="file" accept=".json,application/json" hidden />
+      </div>
+      <div class="top-actions" id="actions-azimuth">
+      <button type="button" class="btn ghost" id="btn-png">PNG</button>
+      <button type="button" class="btn ghost" id="btn-jpg">JPG</button>
+      <button type="button" class="btn" id="btn-pdf">Unduh PDF</button>
+    </div>
+    <div class="top-actions" id="actions-casing" hidden>
+      <button type="button" class="btn ghost" id="csg-png">PNG</button>
+      <button type="button" class="btn ghost" id="csg-jpg">JPG</button>
+      <button type="button" class="btn" id="csg-pdf">Unduh PDF</button>
+    </div>
+    <div class="top-actions" id="actions-drilling" hidden>
+      <button type="button" class="btn ghost" id="ds-png">PNG</button>
+      <button type="button" class="btn ghost" id="ds-jpg">JPG</button>
+      <button type="button" class="btn" id="ds-pdf">Unduh PDF</button>
+    </div>
+    </div>
+  </header>
+
+  <div class="layout" id="panel-azimuth" role="tabpanel">
+    <aside class="panel">
+      <section>
+        <h2>Data</h2>
+        <label class="dropzone" id="dropzone">
+          <input id="file" type="file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" />
+          <strong>Unggah Excel</strong>
+          <span>.xlsx, .xls, atau .csv</span>
+        </label>
+        <div class="row-actions">
+          <button type="button" class="btn ghost" id="btn-template">Template</button>
+          <button type="button" class="btn ghost" id="btn-manual">Atur kolom</button>
+        </div>
+
+        <div id="mapper" hidden>
+          <h3>Pilih kolom</h3>
+          <label>Lembar
+            <select id="map-sheet"></select>
+          </label>
+          <label>Baris header
+            <input id="map-header-row" type="number" min="1" step="1" value="1" />
+          </label>
+          <label>Sumur
+            <select id="map-well"></select>
+          </label>
+          <label>Azimuth awal
+            <select id="map-az-awal"></select>
+          </label>
+          <label>Azimuth akhir
+            <select id="map-az-akhir"></select>
+          </label>
+          <label>Inklinasi awal
+            <select id="map-inc-awal"></select>
+          </label>
+          <label>Inklinasi akhir
+            <select id="map-inc-akhir"></select>
+          </label>
+          <label>Formasi (opsional)
+            <select id="map-formation"></select>
+          </label>
+          <label>Nama formasi jika tidak ada kolom
+            <input id="map-formation-name" type="text" placeholder="Misalnya Parigi Top" />
+          </label>
+          <button type="button" class="btn" id="map-apply">Gunakan kolom ini</button>
+          <div id="map-preview" class="preview"></div>
+        </div>
+        <details class="fold">
+          <summary>Contoh data</summary>
+          <div class="row-actions">
+            <button type="button" class="btn ghost" id="btn-sample-parigi">Parigi Top</button>
+            <button type="button" class="btn ghost" id="btn-sample-wpa">WPA &amp; UPA</button>
+          </div>
+        </details>
+        <p class="status" id="status" role="status"></p>
+      </section>
+
+      <section>
+        <h2>Gambar</h2>
+        <div id="formation-select-wrap">
+          <label>Pilih formasi
+            <select id="formation-select"></select>
+          </label>
+        </div>
+        <label>Formasi
+          <input id="formation-name" type="text" spellcheck="false" />
+        </label>
+        <label>Keterangan
+          <textarea id="caption" rows="2" spellcheck="true"></textarea>
+        </label>
+      </section>
+
+      <section>
+        <h2>Sumur</h2>
+        <p class="micro" id="visible-count" hidden></p>
+        <div id="wells"></div>
+        <button type="button" class="btn ghost wide" id="btn-add-well">Tambah sumur</button>
+        <details class="fold">
+          <summary>Tempel dari Excel</summary>
+          <label>Tempel sebagai
+            <select id="paste-target">
+              <option value="azimuth">Azimuth awal dan akhir</option>
+              <option value="inclination">Inklinasi awal dan akhir</option>
+            </select>
+          </label>
+          <label class="sr" for="paste-box">Nilai awal dan akhir</label>
+          <textarea id="paste-box" rows="4" spellcheck="false" placeholder="236,16&#9;240,85"></textarea>
+          <button type="button" class="btn ghost wide" id="btn-paste">Terapkan</button>
+        </details>
+      </section>
+
+      <details class="fold settings">
+        <summary>Pengaturan gambar</summary>
+        <label>Arah busur
+          <select id="arc-mode">
+            <option value="short">Terpendek</option>
+            <option value="cw">Searah jarum jam</option>
+            <option value="ccw">Berlawanan jarum jam</option>
+          </select>
+        </label>
+        <div class="split">
+          <label>Inklinasi min
+            <input id="inc-min" type="number" min="0" max="180" step="any" placeholder="0" />
+          </label>
+          <label>Inklinasi maks
+            <input id="inc-max" type="number" min="0" max="180" step="any" placeholder="Otomatis" />
+          </label>
+        </div>
+        <label>Grid
+          <select id="inc-step">
+            <option value="5">5°</option>
+            <option value="10">10°</option>
+          </select>
+        </label>
+        <p class="micro" id="scale-note"></p>
+        <label>Garis <span id="stroke-width-value">1.8</span>
+          <input id="stroke-width" type="range" min="0.5" max="5" step="0.1" value="1.8" />
+        </label>
+        <label>Isian <span id="fill-opacity-value">0%</span>
+          <input id="fill-opacity" type="range" min="0" max="0.7" step="0.02" value="0" />
+        </label>
+        <label>Pola legenda
+          <input id="legend-template" type="text" spellcheck="false" />
+        </label>
+        <label>Desimal
+          <select id="decimal-comma">
+            <option value="dot">Titik (28.75)</option>
+            <option value="comma">Koma (28,75)</option>
+          </select>
+        </label>
+        <div class="row-actions">
+          <button type="button" class="btn ghost" id="btn-legend-reset">Legenda dari data</button>
+          <button type="button" class="btn ghost" id="btn-recolor">Warna ulang</button>
+        </div>
+        <label class="check-line" id="pdf-all-wrap">
+          <input id="pdf-all" type="checkbox" checked />
+          PDF satu halaman per formasi
+        </label>
+      </details>
+    </aside>
+
+    <main>
+      <div class="stage" id="stage">
+        <div class="zoom-bar" title="Seret gambar untuk menggeser. Tombol Area, atau Shift+seret, memilih bagian yang diperbesar.">
+          <button type="button" class="btn ghost zoom-btn" id="btn-zoom-out" aria-label="Perkecil gambar">−</button>
+          <span id="zoom-label">100%</span>
+          <button type="button" class="btn ghost zoom-btn" id="btn-zoom-in" aria-label="Perbesar gambar">+</button>
+          <button type="button" class="btn ghost zoom-btn" id="btn-zoom-area" aria-pressed="false" title="Seret pada gambar untuk memperbesar area itu">Area</button>
+          <button type="button" class="btn ghost zoom-btn" id="btn-zoom-reset">Sesuai</button>
+        </div>
+        <div class="sheet" id="sheet">
+          <canvas id="chart" aria-label="Chart polar azimuth dan inklinasi"></canvas>
+          <div id="zoom-labels"></div>
+          <div id="marquee" hidden></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="layout wide" id="panel-casing" role="tabpanel" hidden>
+    <aside class="panel">
+      <section>
+        <h2>Gambar</h2>
+        <label>Judul
+          <input id="csg-title" type="text" spellcheck="false" placeholder="Opsional, tampil di atas gambar" />
+        </label>
+        <div class="split">
+          <label>Satuan
+            <select id="csg-unit">
+              <option value="ft">ft</option>
+              <option value="m">m</option>
+            </select>
+          </label>
+          <label>Angka
+            <select id="csg-decimal">
+              <option value="comma">1.712,88</option>
+              <option value="dot">1,712.88</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <details class="fold" id="csg-fm-fold">
+        <summary>Formasi <span class="count" id="csg-fm-count"></span></summary>
+        <p class="micro">Kolom warna di kiri gambar. Lewati jika tidak ada data formasi.</p>
+        <div id="csg-formations"></div>
+        <button type="button" class="btn ghost wide" id="csg-add-fm">Tambah formasi</button>
+      </details>
+
+      <section>
+        <h2>Sumur</h2>
+        <p class="micro">Isi MD shoe dan TVD shoe. Casing selalu digambar dari 0 TVD. Kosongkan Top of liner bila belum ada data: liner digambar lebih tinggi supaya sambungannya dengan casing terdalam terlihat jelas. Isi Top of liner untuk memakai kedalaman TVD yang pasti. Garis biasa untuk casing, putus-putus untuk open hole atau liner perforated.</p>
+        <div class="row-actions">
+          <button type="button" class="btn ghost" id="csg-sample">Muat contoh</button>
+          <button type="button" class="btn ghost" id="csg-clear">Kosongkan</button>
+        </div>
+        <div id="csg-wells"></div>
+        <button type="button" class="btn ghost wide" id="csg-add-well">Tambah sumur</button>
+        <p class="status" id="csg-status" role="status"></p>
+      </section>
+
+      <details class="fold settings">
+        <summary>Pengaturan gambar</summary>
+        <label>TVD maksimum
+          <input id="csg-max" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Otomatis" />
+        </label>
+        <label>Teks akhir sumur
+          <input id="csg-end-label" type="text" spellcheck="false" />
+        </label>
+        <p class="micro" id="csg-max-hint">Skala kosong mengikuti data terdalam. Teks akhir muncul di kedalaman TD.</p>
+      </details>
+    </aside>
+
+    <main>
+      <div class="stage">
+        <div class="csg-toolbar">
+          <span class="micro">Pratinjau</span>
+          <div class="zoom-bar" title="Seret gambar dengan klik kiri untuk menggeser. Gulir untuk memperbesar atau memperkecil.">
+            <button type="button" class="btn ghost zoom-btn" id="csg-zoom-out" aria-label="Perkecil gambar">−</button>
+            <span id="csg-zoom-label">100%</span>
+            <button type="button" class="btn ghost zoom-btn" id="csg-zoom-in" aria-label="Perbesar gambar">+</button>
+            <button type="button" class="btn ghost zoom-btn" id="csg-zoom-fit">Sesuai</button>
+          </div>
+        </div>
+        <div class="sheet" id="csg-sheet">
+          <canvas id="csg-chart" aria-label="Skema casing setting depth"></canvas>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="layout wide ds-layout" id="panel-drilling" role="tabpanel" hidden>
+    <aside class="panel">
+      <section>
+        <h2>Gambar</h2>
+        <label>Judul
+          <input id="ds-title" type="text" spellcheck="false" autocomplete="off" placeholder="Time vs Depth" />
+        </label>
+        <label>Sumur
+          <input id="ds-well" type="text" spellcheck="false" autocomplete="off" placeholder="OOA-3" />
+        </label>
+        <label>Keterangan
+          <input id="ds-subtitle" type="text" spellcheck="false" autocomplete="off" placeholder="Perusahaan, rig, atau periode" />
+        </label>
+        <label>TD (ft-MD)
+          <input id="ds-td" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Otomatis" />
+        </label>
+        <label>TD (ft-TVD)
+          <input id="ds-td-tvd" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Otomatis" />
+        </label>
+        <label>Angka
+          <select id="ds-decimal">
+            <option value="comma">1.712,88</option>
+            <option value="dot">1,712.88</option>
+          </select>
+        </label>
+      </section>
+
+      <section>
+        <h2>Casing</h2>
+        <label class="check-line">
+          <input id="ds-show-casing" type="checkbox" checked />
+          Tampilkan di grafik
+        </label>
+        <label>Sumur
+          <select id="ds-casing-well">
+            <option value="">Tidak ditampilkan</option>
+          </select>
+        </label>
+        <p class="micro">Gambar casing diambil dari sumur yang sudah diisi di Casing Setting Depth, lalu diletakkan di kiri grafik.</p>
+      </section>
+
+      <section>
+        <h2>Formasi <span class="count" id="ds-fm-count"></span></h2>
+        <label class="check-line">
+          <input id="ds-show-fm" type="checkbox" checked />
+          Tampilkan di grafik
+        </label>
+        <p class="micro">Kolom di kiri gambar casing. Salin dari Excel: nama formasi, lalu baris Top dan Bottom dengan ft-MD dan ft-TVD. Atas kosong berarti mulai dari permukaan.</p>
+        <textarea id="ds-fm-paste" rows="6" spellcheck="false" placeholder="Formasi&#9;ft-MD&#9;ft-TVD&#10;Pre Parigi&#10;Top&#9;0&#9;0&#10;Bottom&#9;1842&#9;1700"></textarea>
+        <button type="button" class="btn ghost wide" id="ds-fm-paste-apply">Tempel formasi</button>
+        <div id="ds-formations"></div>
+        <button type="button" class="btn ghost wide" id="ds-add-fm">Tambah formasi</button>
+      </section>
+
+      <section>
+        <h2>Hari dan kedalaman <span class="count" id="ds-progress-count"></span></h2>
+        <p class="micro">Titik garis kedalaman. Saat mengebor, kedalaman bertambah. Saat diam, kedalaman tetap. Salin tiga kolom Day, ft-MD, dan ft-TVD dari Excel, lalu tempel di kotak bawah.</p>
+        <textarea id="ds-paste" rows="4" spellcheck="false" placeholder="Day&#9;ft-MD&#9;ft-TVD&#10;1&#9;0&#9;0&#10;11&#9;366&#9;300"></textarea>
+        <button type="button" class="btn ghost wide" id="ds-paste-apply">Tempel ke kedalaman</button>
+        <div id="ds-progress"></div>
+        <button type="button" class="btn ghost wide" id="ds-add-progress">Tambah hari</button>
+      </section>
+
+      <section>
+        <div class="row-actions">
+          <button type="button" class="btn ghost" id="ds-sample">Muat contoh</button>
+          <button type="button" class="btn ghost" id="ds-clear">Kosongkan</button>
+        </div>
+        <p class="status" id="ds-status" role="status"></p>
+      </section>
+    </aside>
+
+    <main>
+      <div class="stage">
+        <div class="csg-toolbar">
+          <span class="micro">Pratinjau</span>
+          <div class="zoom-bar" title="Seret gambar dengan klik kiri untuk menggeser. Gulir untuk memperbesar atau memperkecil.">
+            <button type="button" class="btn ghost zoom-btn" id="ds-zoom-out" aria-label="Perkecil gambar">−</button>
+            <span id="ds-zoom-label">100%</span>
+            <button type="button" class="btn ghost zoom-btn" id="ds-zoom-in" aria-label="Perbesar gambar">+</button>
+            <button type="button" class="btn ghost zoom-btn" id="ds-zoom-fit">Sesuai</button>
+          </div>
+          <div class="ds-mode" role="group" aria-label="Mode kedalaman grafik">
+            <button type="button" id="ds-mode-md" aria-pressed="true">ft-MD</button>
+            <button type="button" id="ds-mode-tvd" aria-pressed="false">ft-TVD</button>
+          </div>
+        </div>
+        <div class="sheet" id="ds-sheet">
+          <canvas id="ds-chart" aria-label="Drilling summary, waktu terhadap kedalaman"></canvas>
+        </div>
+      </div>
+      <section class="ds-below">
+        <div class="ds-axis-row">
+          <label class="ds-end-field">Hari selesai pengerjaan sumur
+            <input id="ds-end" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Otomatis" />
+          </label>
+          <label>Angka sumbu hari
+            <select id="ds-day-mode">
+              <option value="interval">Interval</option>
+              <option value="all">Semua hari</option>
+            </select>
+          </label>
+          <label id="ds-day-step-wrap">Interval (hari)
+            <input id="ds-day-step" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Otomatis" />
+          </label>
+        </div>
+        <p class="micro">Interval mengatur jarak angka hari. Semua hari menampilkan setiap angka dari 1 sampai hari selesai. Tulisan Day hanya sekali, di tengah grafik sumur.</p>
+        <h2>Masalah sumur <span class="count" id="ds-event-count"></span></h2>
+        <label class="ds-symbol-field">Ukuran simbol
+          <input id="ds-symbol" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="9" />
+        </label>
+        <p class="micro">Klik kolom Day, lalu tempel dari Excel. Setiap baris yang disalin menjadi satu masalah, urutannya Day, ft-MD, lalu ft-TVD. Kategori dipilih sendiri. Untuk beberapa baris sekaligus, centang atau seret kotak di kiri, lalu terapkan satu kategori. Ukuran simbol mengatur besar penanda di grafik.</p>
+        <div class="ds-bulk">
+          <p class="micro" id="ds-bulk-count">Belum ada masalah dipilih.</p>
+          <label>Kategori untuk yang dipilih
+            <select id="ds-bulk-category"></select>
+          </label>
+          <button type="button" class="btn" id="ds-bulk-apply" disabled>Terapkan</button>
+        </div>
+        <div id="ds-events"></div>
+        <button type="button" class="btn ghost" id="ds-add-event">Tambah masalah</button>
+      </section>
+    </main>
+  </div>
+
+  <script src="shared/vendor/xlsx.full.min.js"></script>
+  <script src="shared/vendor/jspdf.umd.min.js"></script>
+  <script src="azimuth/azimuth.js"></script>
+  <script src="casing/casing.js"></script>
+  <script src="drilling/drilling.js?v=20261008c"></script>
+</body>
+</html>
