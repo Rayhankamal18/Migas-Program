@@ -42,6 +42,7 @@
     showFormations: true,
     symbolSize: 9,
     colorRevision: 0,
+    legendOff: { depth: false, categories: {} },
     formations: [],
     progress: [],
     events: []
@@ -204,6 +205,27 @@
 
   function normCat(value) {
     return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  }
+
+  function categoryKey(name) {
+    return normCat(name) || "__none__";
+  }
+
+  function categoryShown(name) {
+    return !state.legendOff.categories[categoryKey(name)];
+  }
+
+  function emptyLegendOff() {
+    return { depth: false, categories: {} };
+  }
+
+  function normalizeLegendOff(raw) {
+    const categories = {};
+    const source = raw && raw.categories && typeof raw.categories === "object" ? raw.categories : {};
+    Object.keys(source).forEach((key) => {
+      if (source[key]) categories[String(key)] = true;
+    });
+    return { depth: !!(raw && raw.depth), categories };
   }
 
   function roundRect(ctx, x, y, w, h, r) {
@@ -744,10 +766,17 @@
     const metrics = legendMetrics();
     const rows = [[]];
     let used = 0;
+    const centerRow = (row) => {
+      if (!row.length) return;
+      const rowWidth = row.reduce((sum, item, index) => sum + item.w + (index ? gap : 0), 0);
+      const shift = Math.max(0, (width - rowWidth) / 2);
+      row.forEach((item) => { item.x += shift; });
+    };
     items.forEach((item) => {
       const w = metrics.swatch + 4 + textWidth(FONT, item.label);
       const row = rows[rows.length - 1];
       if (row.length && used + gap + w > width) {
+        centerRow(row);
         rows.push([]);
         used = 0;
       }
@@ -756,15 +785,17 @@
       current.push({ ...item, x, w });
       used = x - left + w;
     });
+    centerRow(rows[rows.length - 1]);
     if (!items.length) return { rows: [], height: 0, pitch: metrics.pitch, swatch: metrics.swatch, radius: metrics.radius };
     return { rows, height: rows.length * metrics.pitch, pitch: metrics.pitch, swatch: metrics.swatch, radius: metrics.radius };
   }
 
   function scene() {
     const curveInfo = curveSource();
-    const markersIn = plottedEvents();
+    const markersAll = plottedEvents();
+    const markersIn = markersAll.filter((item) => categoryShown(item.category));
     const side = sideSpec();
-    const drawable = curveInfo.points.length || markersIn.length || side.right > 0;
+    const drawable = curveInfo.points.length || markersAll.length || side.right > 0;
     if (!drawable) return { empty: true, w: 920, h: 480 };
 
     const dayMax = domainDay();
@@ -851,8 +882,9 @@
         icon: categoryIcon(item.category)
       });
     });
+    const showDepth = curve.length > 0 && !state.legendOff.depth;
     const legendItems = [];
-    if (curve.length) {
+    if (showDepth) {
       const well = (state.well || "").trim();
       legendItems.push({
         type: "depth",
@@ -893,6 +925,7 @@
       dayTicks,
       dayNumberExtent,
       curve,
+      showDepth,
       markers,
       legend,
       legendTop
@@ -1171,7 +1204,7 @@
       ctx.stroke();
     });
     paintShoeGuides(ctx, figure);
-    if (figure.curve.length >= 2) {
+    if (figure.showDepth && figure.curve.length >= 2) {
       ctx.beginPath();
       figure.curve.forEach((point, index) => (index ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y)));
       ctx.setLineDash([8, 5]);
@@ -1180,7 +1213,7 @@
       ctx.lineJoin = "round";
       ctx.lineCap = "round";
       ctx.stroke();
-    } else if (figure.curve.length === 1) {
+    } else if (figure.showDepth && figure.curve.length === 1) {
       const point = figure.curve[0];
       ctx.setLineDash([8, 5]);
       ctx.lineWidth = 2.4;
@@ -1349,12 +1382,119 @@
     }, { passive: false });
   }
 
+  function depthLegendLabel() {
+    const well = (state.well || "").trim();
+    return curveSource().fromEvents ? "Kedalaman masalah" : (well ? `Depth ${well}` : "Kedalaman sumur");
+  }
+
+  function legendEntries() {
+    const entries = [];
+    if (curveSource().points.length) {
+      entries.push({
+        kind: "depth",
+        key: "depth",
+        label: depthLegendLabel(),
+        on: !state.legendOff.depth
+      });
+    }
+    const groups = new Map();
+    state.events.forEach((item) => {
+      const key = categoryKey(item.category);
+      let group = groups.get(key);
+      if (!group) {
+        group = {
+          kind: "event",
+          key,
+          label: (item.category || "").trim() || "Tanpa kategori",
+          color: normalizeColor(item.color),
+          icon: categoryIcon(item.category),
+          count: 0
+        };
+        groups.set(key, group);
+      }
+      group.count += 1;
+      group.color = normalizeColor(item.color);
+      group.label = (item.category || "").trim() || "Tanpa kategori";
+    });
+    const ordered = [];
+    CATEGORIES.forEach((entry) => {
+      const group = groups.get(normCat(entry.name));
+      if (group) ordered.push(group);
+    });
+    groups.forEach((group) => {
+      if (!ordered.includes(group)) ordered.push(group);
+    });
+    ordered.forEach((group) => {
+      entries.push({ ...group, on: !state.legendOff.categories[group.key] });
+    });
+    return entries;
+  }
+
+  function paintSwitchIcon(canvas, entry) {
+    const scale = 2;
+    const width = 22;
+    const height = 16;
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    if (entry.kind === "depth") {
+      ctx.strokeStyle = DEPTH_COLOR;
+      ctx.lineWidth = 2.4;
+      ctx.setLineDash([5, 3]);
+      ctx.beginPath();
+      ctx.moveTo(1, height / 2);
+      ctx.lineTo(width - 1, height / 2);
+      ctx.stroke();
+      return;
+    }
+    paintProblemIcon(ctx, width / 2, height / 2, 6, entry.color, entry.icon);
+  }
+
+  let legendSignature = "";
+
+  function renderLegendPanel() {
+    const panel = document.getElementById("ds-legend-panel");
+    const host = document.getElementById("ds-legend-switches");
+    const count = document.getElementById("ds-legend-count");
+    if (!panel || !host || !count) return;
+    const entries = legendEntries();
+    const shown = state.events.filter((item) => categoryShown(item.category)).length;
+    const signature = JSON.stringify({ shown, entries });
+    if (signature === legendSignature) return;
+    legendSignature = signature;
+    panel.hidden = !entries.length;
+    count.textContent = state.events.length ? `${shown} masalah` : "";
+    host.innerHTML = entries.map((entry) => {
+      const countHtml = entry.kind === "event" ? `<span class="ds-legend-n">${entry.count}</span>` : "";
+      return `<button type="button" class="ds-legend-switch" data-legend="${esc(entry.kind)}" data-key="${esc(entry.key)}" aria-pressed="${entry.on ? "true" : "false"}">
+        <canvas aria-hidden="true"></canvas>
+        <span>${esc(entry.label)}</span>${countHtml}
+      </button>`;
+    }).join("");
+    host.querySelectorAll(".ds-legend-switch").forEach((button, index) => {
+      paintSwitchIcon(button.querySelector("canvas"), entries[index]);
+    });
+  }
+
+  function toggleLegend(kind, key) {
+    if (kind === "depth") state.legendOff.depth = !state.legendOff.depth;
+    else if (state.legendOff.categories[key]) delete state.legendOff.categories[key];
+    else state.legendOff.categories[key] = true;
+    persist();
+    renderLegendPanel();
+    requestDraw();
+  }
+
   function draw() {
     const canvas = document.getElementById("ds-chart");
     if (!canvas) return;
     fillCasingSelect();
     try {
       lastScene = renderCanvas(canvas, 2);
+      renderLegendPanel();
       applyZoom();
       const empty = !!lastScene.empty;
       ["ds-png", "ds-jpg", "ds-pdf"].forEach((id) => {
@@ -1999,6 +2139,7 @@
     state.showFormations = data.showFormations !== false;
     state.symbolSize = clampSymbolSize(data.symbolSize);
     state.colorRevision = Number(data.colorRevision) || 0;
+    state.legendOff = normalizeLegendOff(data.legendOff);
     state.formations = data.formations || [];
     state.progress = data.progress || [];
     state.events = data.events || [];
@@ -2069,6 +2210,7 @@
         showFormations: state.showFormations,
         symbolSize: state.symbolSize,
         colorRevision: state.colorRevision,
+        legendOff: normalizeLegendOff(state.legendOff),
         formations: state.formations,
         progress: state.progress,
         events: state.events
@@ -2162,6 +2304,7 @@
       showFormations: data.showFormations,
       symbolSize: data.symbolSize,
       colorRevision: data.colorRevision,
+      legendOff: data.legendOff,
       formations: Array.isArray(data.formations) ? data.formations.map(normalizeFormation) : [],
       progress: data.progress.map(normalizeProgress),
       events: data.events.map(normalizeEvent)
@@ -2197,6 +2340,7 @@
       showFormations: state.showFormations,
       symbolSize: state.symbolSize,
       colorRevision: state.colorRevision,
+      legendOff: normalizeLegendOff(state.legendOff),
       formations: state.formations,
       progress: state.progress,
       events: state.events
@@ -2292,6 +2436,7 @@
     state.formations = [];
     state.casingWellId = "";
     state.casingWellName = "";
+    state.legendOff = emptyLegendOff();
     persist();
     renderAll();
     requestDraw();
@@ -2569,6 +2714,14 @@
     });
     document.getElementById("ds-mode-md").addEventListener("click", () => setDepthMode("md"));
     document.getElementById("ds-mode-tvd").addEventListener("click", () => setDepthMode("tvd"));
+    const legendSwitches = document.getElementById("ds-legend-switches");
+    if (legendSwitches) {
+      legendSwitches.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-legend]");
+        if (!button || !legendSwitches.contains(button)) return;
+        toggleLegend(button.getAttribute("data-legend"), button.getAttribute("data-key") || "");
+      });
+    }
     document.getElementById("ds-add-event").addEventListener("click", () => addItem("event"));
     const bulkCategory = document.getElementById("ds-bulk-category");
     if (bulkCategory) {
