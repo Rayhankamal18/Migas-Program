@@ -32,6 +32,78 @@
   color: #fff;
 }
 
+.ds-legend-panel {
+  margin-top: 12px;
+  padding: 10px 12px 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+}
+
+.ds-legend-count {
+  margin: 0 0 2px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1e3a5f;
+}
+
+.ds-legend-panel .micro { margin: 0 0 10px; }
+
+.ds-legend-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ds-legend-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #1e3a5f;
+  background: #fff;
+  color: #1e3a5f;
+  border-radius: 999px;
+  padding: 3px 10px 3px 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.ds-legend-switch canvas {
+  display: block;
+  flex: 0 0 auto;
+}
+
+.ds-legend-switch[aria-pressed="true"] {
+  background: #e7f0fa;
+}
+
+.ds-legend-switch[aria-pressed="false"] {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #94a3b8;
+}
+
+.ds-legend-switch[aria-pressed="false"] canvas {
+  opacity: 0.35;
+}
+
+.ds-legend-n {
+  min-width: 1.2em;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #1e3a5f;
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.ds-legend-switch[aria-pressed="false"] .ds-legend-n {
+  background: #cbd5e1;
+  color: #475569;
+}
+
 .ds-below {
   margin-top: 16px;
   overflow-x: auto;
