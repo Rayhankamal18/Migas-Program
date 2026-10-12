@@ -2361,7 +2361,7 @@
   }
 
   function projectStatus(text) {
-    ["status", "csg-status", "ds-status"].forEach((id) => {
+    ["status", "csg-status", "ds-status", "bx-status"].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.textContent = text;
     });
@@ -2372,6 +2372,7 @@
     if (!selected) return "azimuth";
     if (selected.id === "tab-casing") return "casing";
     if (selected.id === "tab-drilling") return "drilling";
+    if (selected.id === "tab-boxplot") return "boxplot";
     return "azimuth";
   }
 
@@ -2385,7 +2386,8 @@
       tab: activeTab(),
       azimuth: window.AzimuthChart.snapshot(),
       casing: window.CasingSetting.snapshot(),
-      drilling: snapshot()
+      drilling: snapshot(),
+      boxplot: window.BoxWhisker ? window.BoxWhisker.snapshot() : null
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const link = document.createElement("a");
@@ -2413,7 +2415,8 @@
     const azimuthOk = data.azimuth ? window.AzimuthChart.load(data.azimuth) : false;
     const casingOk = data.casing ? window.CasingSetting.load(data.casing) : false;
     const drillingOk = data.drilling ? loadProject(data.drilling) : false;
-    if (!azimuthOk && !casingOk && !drillingOk) {
+    const boxOk = data.boxplot && window.BoxWhisker ? window.BoxWhisker.load(data.boxplot) : false;
+    if (!azimuthOk && !casingOk && !drillingOk && !boxOk) {
       projectStatus("Berkas tidak berisi data yang bisa dibuka.");
       return;
     }

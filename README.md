@@ -11,6 +11,7 @@ Klik dua kali `Buka Chart.bat`, atau buka `Migas Program.html` di browser. Tidak
 - **Azimuth Polar Chart** — busur azimuth dan inklinasi per sumur. Data bisa diunggah dari Excel (`.xlsx`, `.xls`, `.csv`) atau diisi manual.
 - **Casing Setting Depth** — rangkaian casing dan liner terhadap kedalaman, dengan kolom formasi di samping gambar.
 - **Drilling Summary** — grafik waktu terhadap kedalaman (ft-MD atau ft-TVD), lengkap dengan formasi, casing, dan tanda masalah sumur.
+- **Box & Whisker** — sebaran nilai per kolom, misalnya mud weight per formasi. Salin tabel dari Excel beserta header; header menjadi sumbu X. Warna tiap kolom memakai palet formasi dan bisa diubah.
 
 ## Drilling Summary
 

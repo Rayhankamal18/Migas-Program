@@ -1371,7 +1371,8 @@
     const names = {
       azimuth: { panel: "panel-azimuth", actions: "actions-azimuth", tab: "tab-azimuth", title: "Chart Azimuth & Inklinasi" },
       casing: { panel: "panel-casing", actions: "actions-casing", tab: "tab-casing", title: "Casing Setting Depth" },
-      drilling: { panel: "panel-drilling", actions: "actions-drilling", tab: "tab-drilling", title: "Drilling Summary" }
+      drilling: { panel: "panel-drilling", actions: "actions-drilling", tab: "tab-drilling", title: "Drilling Summary" },
+      boxplot: { panel: "panel-boxplot", actions: "actions-boxplot", tab: "tab-boxplot", title: "Box & Whisker" }
     };
     const active = names[tab] ? tab : "azimuth";
     Object.keys(names).forEach((key) => {
@@ -1389,6 +1390,7 @@
     try { localStorage.setItem(TAB_KEY, active); } catch (err) { /* storage unavailable */ }
     if (active === "casing") draw();
     else if (active === "drilling" && window.DrillingSummary) window.DrillingSummary.draw();
+    else if (active === "boxplot" && window.BoxWhisker) window.BoxWhisker.draw();
     else requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
   }
 
@@ -1396,6 +1398,7 @@
     document.getElementById("tab-azimuth").addEventListener("click", () => activate("azimuth"));
     document.getElementById("tab-casing").addEventListener("click", () => activate("casing"));
     document.getElementById("tab-drilling").addEventListener("click", () => activate("drilling"));
+    document.getElementById("tab-boxplot").addEventListener("click", () => activate("boxplot"));
     document.getElementById("csg-formations").addEventListener("input", onField);
     document.getElementById("csg-formations").addEventListener("click", onClick);
     document.getElementById("csg-wells").addEventListener("input", onField);
@@ -1507,7 +1510,7 @@
     let tab = "azimuth";
     try {
       const stored = localStorage.getItem(TAB_KEY);
-      if (stored === "casing" || stored === "drilling") tab = stored;
+      if (stored === "casing" || stored === "drilling" || stored === "boxplot") tab = stored;
     } catch (err) { tab = "azimuth"; }
     activate(tab);
   }

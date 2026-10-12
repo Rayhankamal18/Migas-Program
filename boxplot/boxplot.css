@@ -1,0 +1,125 @@
+.bx-layout { grid-template-columns: 400px minmax(0, 1fr); }
+
+.bx-below {
+  margin-top: 16px;
+}
+
+.bx-below h2 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.bx-table-wrap {
+  overflow: auto;
+  max-height: 420px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.bx-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+}
+
+.bx-table th,
+.bx-table td {
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 6px;
+  vertical-align: middle;
+  background: #fff;
+}
+
+.bx-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #1e3a5f;
+  color: #fff;
+  min-width: 176px;
+}
+
+.bx-table th.bx-rowhead,
+.bx-table td.bx-rowhead {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  width: 72px;
+  min-width: 72px;
+  background: #f7f4ee;
+  color: var(--muted);
+  text-align: center;
+}
+
+.bx-table th.bx-rowhead { z-index: 3; background: #16324f; color: #fff; }
+
+.bx-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bx-head input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  background: #fff;
+  color: var(--ink);
+}
+
+.bx-head input[type="color"] {
+  width: 32px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.bx-table input[type="text"] { margin: 0; width: 100%; }
+
+.bx-icon {
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: transparent;
+  color: #fff;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.bx-rowhead .bx-icon {
+  border-color: var(--line);
+  color: var(--ink);
+  background: #fff;
+}
+
+.bx-icon:hover { background: #e7efe9; color: var(--accent); }
+
+.bx-checks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 10px;
+  margin-bottom: 8px;
+}
+
+.bx-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.bx-check input { margin: 0; }
+
+.bx-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
