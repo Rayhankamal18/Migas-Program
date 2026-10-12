@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="azimuth/azimuth.css" />
   <link rel="stylesheet" href="casing/casing.css" />
   <link rel="stylesheet" href="drilling/drilling.css" />
+  <link rel="stylesheet" href="boxplot/boxplot.css" />
 </head>
 <body>
   <header class="topbar">
@@ -17,6 +18,7 @@
         <button type="button" class="tab" id="tab-azimuth" role="tab" aria-selected="true" aria-controls="panel-azimuth">Azimuth Polar Chart</button>
         <button type="button" class="tab" id="tab-casing" role="tab" aria-selected="false" aria-controls="panel-casing">Casing Setting Depth</button>
         <button type="button" class="tab" id="tab-drilling" role="tab" aria-selected="false" aria-controls="panel-drilling">Drilling Summary</button>
+        <button type="button" class="tab" id="tab-boxplot" role="tab" aria-selected="false" aria-controls="panel-boxplot">Box &amp; Whisker</button>
       </nav>
     </div>
     <div class="top-actions-wrap">
@@ -39,6 +41,11 @@
       <button type="button" class="btn ghost" id="ds-png">PNG</button>
       <button type="button" class="btn ghost" id="ds-jpg">JPG</button>
       <button type="button" class="btn" id="ds-pdf">Unduh PDF</button>
+    </div>
+    <div class="top-actions" id="actions-boxplot" hidden>
+      <button type="button" class="btn ghost" id="bx-png">PNG</button>
+      <button type="button" class="btn ghost" id="bx-jpg">JPG</button>
+      <button type="button" class="btn" id="bx-pdf">Unduh PDF</button>
     </div>
     </div>
   </header>
@@ -403,10 +410,100 @@
     </main>
   </div>
 
+  <div class="layout wide bx-layout" id="panel-boxplot" role="tabpanel" hidden>
+    <aside class="panel">
+      <section>
+        <h2>Gambar</h2>
+        <label>Judul
+          <input id="bx-title" type="text" spellcheck="false" autocomplete="off" />
+        </label>
+        <label>Sumbu Y
+          <input id="bx-ylabel" type="text" spellcheck="false" autocomplete="off" />
+        </label>
+        <label>Sumbu X
+          <input id="bx-xlabel" type="text" spellcheck="false" autocomplete="off" />
+        </label>
+        <label>Angka
+          <select id="bx-decimal">
+            <option value="comma">9,5</option>
+            <option value="dot">9.5</option>
+          </select>
+        </label>
+        <div class="split">
+          <label>Y minimum
+            <input id="bx-ymin" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Otomatis" />
+          </label>
+          <label>Y maksimum
+            <input id="bx-ymax" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Otomatis" />
+          </label>
+        </div>
+      </section>
+      <section id="bx-toggles">
+        <h2>Tampilkan</h2>
+        <p class="micro">Setiap bagian gambar bisa dimatikan sendiri. Keterangan hanya menyembunyikan tulisan di bawah grafik, tanpa mengubah tanda yang masih menyala. Angka di bawahnya menyala satu per satu, per kolom.</p>
+        <div class="bx-checks">
+          <label class="bx-check"><input id="bx-show-box" data-group="show" data-flag="box" type="checkbox" checked /> Kotak Q1–Q3</label>
+          <label class="bx-check"><input id="bx-show-median" data-group="show" data-flag="median" type="checkbox" checked /> Garis median</label>
+          <label class="bx-check"><input id="bx-show-mean" data-group="show" data-flag="mean" type="checkbox" checked /> Tanda mean</label>
+          <label class="bx-check"><input id="bx-show-whisker" data-group="show" data-flag="whisker" type="checkbox" checked /> Whisker</label>
+          <label class="bx-check"><input id="bx-show-outlier" data-group="show" data-flag="outlier" type="checkbox" checked /> Outlier</label>
+          <label class="bx-check"><input id="bx-show-legend" data-group="show" data-flag="legend" type="checkbox" checked /> Keterangan</label>
+        </div>
+        <h2>Angka per kolom</h2>
+        <div class="bx-checks">
+          <label class="bx-check"><input id="bx-num-min" data-group="numbers" data-flag="min" type="checkbox" /> Min</label>
+          <label class="bx-check"><input id="bx-num-q1" data-group="numbers" data-flag="q1" type="checkbox" /> Q1</label>
+          <label class="bx-check"><input id="bx-num-median" data-group="numbers" data-flag="median" type="checkbox" /> Median</label>
+          <label class="bx-check"><input id="bx-num-mean" data-group="numbers" data-flag="mean" type="checkbox" /> Mean</label>
+          <label class="bx-check"><input id="bx-num-q3" data-group="numbers" data-flag="q3" type="checkbox" /> Q3</label>
+          <label class="bx-check"><input id="bx-num-max" data-group="numbers" data-flag="max" type="checkbox" /> Max</label>
+          <label class="bx-check"><input id="bx-num-outlier" data-group="numbers" data-flag="outlier" type="checkbox" /> Outlier</label>
+        </div>
+      </section>
+      <section>
+        <h2>Data</h2>
+        <p class="micro">Salin kolom dari Excel beserta headernya, lalu tempel di sini. Header menjadi nama di sumbu X. Jumlah kolom mengikuti tempelan. Warna awal mengikuti palet formasi, dan bisa diubah di header tabel.</p>
+        <textarea id="bx-paste" rows="6" spellcheck="false" placeholder="Pre Parigi&#9;Parigi Top&#10;10,4&#9;9,31&#10;9,75&#9;9,31"></textarea>
+        <button type="button" class="btn ghost wide" id="bx-paste-apply">Tempel ke tabel</button>
+        <div class="row-actions">
+          <button type="button" class="btn ghost" id="bx-sample">Muat contoh</button>
+          <button type="button" class="btn ghost" id="bx-clear">Kosongkan</button>
+        </div>
+        <p class="status" id="bx-status" role="status"></p>
+      </section>
+    </aside>
+    <main>
+      <div class="stage">
+        <div class="csg-toolbar">
+          <span class="micro">Pratinjau</span>
+          <div class="zoom-bar" title="Seret gambar untuk menggeser. Gulir untuk memperbesar.">
+            <button type="button" class="btn ghost zoom-btn" id="bx-zoom-out" aria-label="Perkecil gambar">−</button>
+            <span id="bx-zoom-label">100%</span>
+            <button type="button" class="btn ghost zoom-btn" id="bx-zoom-in" aria-label="Perbesar gambar">+</button>
+            <button type="button" class="btn ghost zoom-btn" id="bx-zoom-fit">Sesuai</button>
+          </div>
+        </div>
+        <div class="sheet" id="bx-sheet">
+          <canvas id="bx-chart" aria-label="Box and whisker plot"></canvas>
+        </div>
+      </div>
+      <section class="bx-below">
+        <h2>Tabel data <span class="count" id="bx-col-count"></span></h2>
+        <p class="micro">Satu kolom satu kategori. Header adalah sumbu X. Tempel langsung di tabel juga bisa, selama salinan dari Excel berisi beberapa sel.</p>
+        <div id="bx-table"></div>
+        <div class="bx-table-actions">
+          <button type="button" class="btn ghost" id="bx-add-col">Tambah kolom</button>
+          <button type="button" class="btn ghost" id="bx-add-row">Tambah baris</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
   <script src="shared/vendor/xlsx.full.min.js"></script>
   <script src="shared/vendor/jspdf.umd.min.js"></script>
   <script src="azimuth/azimuth.js"></script>
   <script src="casing/casing.js"></script>
   <script src="drilling/drilling.js?v=20261008c"></script>
+  <script src="boxplot/boxplot.js?v=20261012j"></script>
 </body>
 </html>
