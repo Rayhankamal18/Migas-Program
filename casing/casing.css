@@ -40,6 +40,49 @@
 
 .csg-add .btn { width: 100%; margin-top: 0; }
 
+.csg-well-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.csg-well-head .csg-well { min-width: 0; }
+
+.csg-well-color {
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  gap: 4px 6px;
+  align-items: center;
+  margin: 8px 10px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.csg-well-color > span {
+  grid-column: 1 / -1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.csg-well-color input[type="color"] {
+  width: 36px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: #fff;
+  cursor: pointer;
+}
+
+.csg-well-color input[type="text"] {
+  width: 78px;
+  margin: 0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
 .csg-body label,
 .csg-top {
   margin: 0 0 8px;

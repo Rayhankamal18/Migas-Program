@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="shared/styles.css" />
   <link rel="stylesheet" href="azimuth/azimuth.css" />
   <link rel="stylesheet" href="casing/casing.css" />
-  <link rel="stylesheet" href="drilling/drilling.css" />
+  <link rel="stylesheet" href="drilling/drilling.css?v=20261013e" />
   <link rel="stylesheet" href="boxplot/boxplot.css" />
 </head>
 <body>
@@ -240,7 +240,7 @@
 
       <section>
         <h2>Sumur</h2>
-        <p class="micro">Isi MD shoe dan TVD shoe. Casing selalu digambar dari 0 TVD. Kosongkan Top of liner bila belum ada data: liner digambar lebih tinggi supaya sambungannya dengan casing terdalam terlihat jelas. Isi Top of liner untuk memakai kedalaman TVD yang pasti. Garis biasa untuk casing, putus-putus untuk open hole atau liner perforated.</p>
+        <p class="micro">Isi MD shoe dan TVD shoe. Casing selalu digambar dari 0 TVD. Kosongkan Top of liner bila belum ada data: liner digambar lebih tinggi supaya sambungannya dengan casing terdalam terlihat jelas. Isi Top of liner untuk memakai kedalaman TVD yang pasti. Warna sumur mengelompokkan jenis sumur di header gambar; sumur berurutan dengan warna sama digabung. Garis biasa untuk casing, putus-putus untuk open hole atau liner perforated.</p>
         <div class="row-actions">
           <button type="button" class="btn ghost" id="csg-sample">Muat contoh</button>
           <button type="button" class="btn ghost" id="csg-clear">Kosongkan</button>
@@ -354,25 +354,39 @@
 
     <main>
       <div class="stage">
-        <div class="csg-toolbar">
-          <span class="micro">Pratinjau</span>
-          <div class="zoom-bar" title="Seret gambar dengan klik kiri untuk menggeser. Gulir untuk memperbesar atau memperkecil.">
-            <button type="button" class="btn ghost zoom-btn" id="ds-zoom-out" aria-label="Perkecil gambar">−</button>
-            <span id="ds-zoom-label">100%</span>
-            <button type="button" class="btn ghost zoom-btn" id="ds-zoom-in" aria-label="Perbesar gambar">+</button>
-            <button type="button" class="btn ghost zoom-btn" id="ds-zoom-fit">Sesuai</button>
-          </div>
-          <div class="ds-mode" role="group" aria-label="Mode kedalaman grafik">
-            <button type="button" id="ds-mode-md" aria-pressed="true">ft-MD</button>
-            <button type="button" id="ds-mode-tvd" aria-pressed="false">ft-TVD</button>
+        <div class="csg-toolbar ds-toolbar">
+          <button type="button" class="ds-spread" id="ds-spread" aria-pressed="false">Analisa persebaran</button>
+          <button type="button" class="ds-spread-reset" id="ds-spread-reset" hidden>Reset urutan</button>
+          <div class="ds-toolbar-right">
+            <span class="micro">Pratinjau</span>
+            <div class="zoom-bar" title="Seret gambar dengan klik kiri untuk menggeser. Gulir untuk memperbesar atau memperkecil.">
+              <button type="button" class="btn ghost zoom-btn" id="ds-zoom-out" aria-label="Perkecil gambar">−</button>
+              <span id="ds-zoom-label">100%</span>
+              <button type="button" class="btn ghost zoom-btn" id="ds-zoom-in" aria-label="Perbesar gambar">+</button>
+              <button type="button" class="btn ghost zoom-btn" id="ds-zoom-fit">Sesuai</button>
+            </div>
+            <div class="ds-mode" role="group" aria-label="Mode kedalaman grafik">
+              <button type="button" id="ds-mode-md" aria-pressed="true">ft-MD</button>
+              <button type="button" id="ds-mode-tvd" aria-pressed="false">ft-TVD</button>
+            </div>
           </div>
         </div>
         <div class="sheet" id="ds-sheet">
           <canvas id="ds-chart" aria-label="Drilling summary, waktu terhadap kedalaman"></canvas>
         </div>
         <div class="ds-legend-panel" id="ds-legend-panel" hidden>
-          <p class="ds-legend-count" id="ds-legend-count"></p>
-          <p class="micro">Angka ini di luar grafik dan tidak ikut terunduh. Garis kedalaman tidak dihitung sebagai masalah.</p>
+          <div class="ds-legend-head">
+            <p class="ds-legend-count" id="ds-legend-count"></p>
+            <div class="ds-filter" id="ds-filter" hidden>
+              <button type="button" class="ds-filter-btn" id="ds-filter-btn" aria-expanded="false" aria-haspopup="true" aria-pressed="false">Filter</button>
+              <div class="ds-filter-pop" id="ds-filter-pop" hidden>
+                <label><input type="radio" name="ds-spread-sort" value="" checked /> Tidak sama sekali</label>
+                <label><input type="radio" name="ds-spread-sort" value="desc" /> Besar ke kecil</label>
+                <label><input type="radio" name="ds-spread-sort" value="asc" /> Kecil ke besar</label>
+              </div>
+            </div>
+          </div>
+          <p class="micro" id="ds-legend-note">Angka ini di luar grafik dan tidak ikut terunduh. Garis kedalaman tidak dihitung sebagai masalah.</p>
           <div class="ds-legend-switches" id="ds-legend-switches" role="group" aria-label="Tampilkan keterangan di grafik"></div>
         </div>
       </div>
@@ -503,7 +517,7 @@
   <script src="shared/vendor/jspdf.umd.min.js"></script>
   <script src="azimuth/azimuth.js"></script>
   <script src="casing/casing.js"></script>
-  <script src="drilling/drilling.js?v=20261008c"></script>
+  <script src="drilling/drilling.js?v=20261013e"></script>
   <script src="boxplot/boxplot.js?v=20261012j"></script>
 </body>
 </html>
