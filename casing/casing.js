@@ -12,6 +12,7 @@
   const HANG_LEFT = 1;
   const HANG_RIGHT = 11;
   const FM_COLORS = ["#7A3412", "#2E8B3C", "#3A3A3A", "#8FB56A", "#00B7CE", "#123C48", "#1B6FCB", "#E0A820"];
+  const WELL_COLORS = ["#E8A317", "#B87333", "#F2D11A", "#F2B8C6", "#7EB8DA", "#9BC53D", "#D4A574", "#C4B7D5"];
 
   const state = {
     title: "",
@@ -272,12 +273,29 @@
     return Math.round(value) + 0.5;
   }
 
+  function wellColor(value, index) {
+    const color = (value || "").trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(color)) return color.toUpperCase();
+    return WELL_COLORS[(index || 0) % WELL_COLORS.length];
+  }
+
+  function inkOn(bg) {
+    const hex = String(bg || "").replace("#", "");
+    if (hex.length !== 6) return "#1c1915";
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    const luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    return luma > 0.58 ? "#1c1915" : "#ffffff";
+  }
+
   function scene() {
     const formations = validFormations()
       .map((fm) => ({ name: (fm.name || "").trim(), color: fm.color || "#7A3412", top: fm.topTvd, base: fm.baseTvd }))
       .sort((a, b) => a.top - b.top || a.base - b.base);
-    const wells = state.wells.map((well) => ({
+    const wells = state.wells.map((well, index) => ({
       name: (well.name || "").trim() || "Sumur",
+      color: wellColor(well.color, index),
       tdTvd: well.tdTvd,
       items: well.casings.map((casing) => preparedCasing(casing, well)).filter(Boolean).sort((a, b) => a.shoeTvd - b.shoeTvd || a.shoeMd - b.shoeMd),
       tdText: tdLines(well)
@@ -293,7 +311,8 @@
     const marginR = 22;
     const marginT = 16;
     const titleH = title ? 34 : 0;
-    const plotTop = marginT + titleH + 36;
+    const nameBarH = 28;
+    const plotTop = marginT + titleH + nameBarH + 18;
     const plotH = Math.max(640, Math.min(980, Math.round(tvdMax * 0.12)));
     const plotBottom = plotTop + plotH;
     const yPad = 16;
@@ -397,6 +416,7 @@
       const width = Math.max(180, (labelX - cursorX) + textW + 18);
       const column = {
         name: well.name,
+        color: well.color,
         x: cursorX,
         w: width,
         labelX,
@@ -413,6 +433,22 @@
       };
       cursorX += width;
       return column;
+    });
+
+    const nameBands = [];
+    builtWells.forEach((well) => {
+      const prev = nameBands[nameBands.length - 1];
+      if (prev && prev.color === well.color) {
+        prev.w = well.x + well.w - prev.x;
+        prev.wells.push(well);
+        return;
+      }
+      nameBands.push({
+        color: well.color,
+        x: well.x,
+        w: well.w,
+        wells: [well]
+      });
     });
 
     let lowest = plotBottom;
@@ -446,6 +482,9 @@
       colorX,
       colorW: 30,
       nameX,
+      nameBarTop: marginT + titleH + 4,
+      nameBarH,
+      nameBands,
       wells: builtWells
     };
   }
@@ -470,18 +509,29 @@
       ctx.fillText(figure.title, figure.w / 2, 16 + 12);
     }
 
+    const nameMid = figure.nameBarTop + figure.nameBarH / 2;
     ctx.fillStyle = "#1c1915";
     ctx.font = FONT_WELL;
     ctx.textAlign = "right";
-    ctx.textBaseline = "bottom";
-    ctx.fillText("TVD", figure.axisRight - 2, figure.plotTop - 10);
+    ctx.textBaseline = "middle";
+    ctx.fillText("TVD", figure.axisRight - 2, nameMid);
     if (figure.formationHeader) {
       ctx.textAlign = "center";
-      ctx.fillText("Formasi", figure.formationHeader.x, figure.plotTop - 10);
+      ctx.fillText("Formasi", figure.formationHeader.x, nameMid);
     }
+    (figure.nameBands || []).forEach((band) => {
+      ctx.fillStyle = band.color;
+      ctx.fillRect(band.x, figure.nameBarTop, band.w, figure.nameBarH);
+      ctx.strokeStyle = "rgba(0,0,0,0.18)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(band.x + 0.5, figure.nameBarTop + 0.5, band.w - 1, figure.nameBarH - 1);
+    });
     figure.wells.forEach((well) => {
+      ctx.fillStyle = inkOn(well.color);
+      ctx.font = FONT_WELL;
       ctx.textAlign = "center";
-      ctx.fillText(well.name, well.x + well.w / 2, figure.plotTop - 10);
+      ctx.textBaseline = "middle";
+      ctx.fillText(well.name, well.x + well.w / 2, nameMid);
     });
 
     ctx.strokeStyle = "#222222";
@@ -937,14 +987,16 @@
     const casings = well.casings.length
       ? well.casings.map((casing, casingIndex) => casingHtml(casing, casingIndex, well.casings.length, well)).join("")
       : '<p class="micro">Belum ada rangkaian.</p>';
+    const color = wellColor(well.color, index);
     return `<div class="csg-well-card" data-well="${well.id}">
-      <details class="csg-well" data-well="${well.id}"${openWells.has(well.id) ? " open" : ""}>
-      <summary><span data-summary>${esc(wellSummary(well))}</span></summary>
-      <div class="csg-body">
-        <label>Nama sumur
-          <input data-field="wellName" type="text" spellcheck="false" autocomplete="off" value="${esc(well.name)}" />
-        </label>
-        <p class="micro csg-kicker">Kedalaman akhir (${esc(state.unit)})</p>
+      <div class="csg-well-head">
+        <details class="csg-well" data-well="${well.id}"${openWells.has(well.id) ? " open" : ""}>
+        <summary><span data-summary>${esc(wellSummary(well))}</span></summary>
+        <div class="csg-body">
+          <label>Nama sumur
+            <input data-field="wellName" type="text" spellcheck="false" autocomplete="off" value="${esc(well.name)}" />
+          </label>
+          <p class="micro csg-kicker">Kedalaman akhir (${esc(state.unit)})</p>
         <div class="split">
           <label>MD ${numInput("tdMd", well.tdMd)}</label>
           <label>TVD ${numInput("tdTvd", well.tdTvd)}</label>
@@ -959,6 +1011,12 @@
         </div>
       </div>
       </details>
+        <label class="csg-well-color" title="Warna kelompok sumur">
+          <span>Warna</span>
+          <input data-field="color" type="color" value="${esc(color)}" aria-label="Warna kelompok sumur" />
+          <input data-field="colorHex" type="text" spellcheck="false" autocomplete="off" maxlength="7" value="${esc(color)}" aria-label="Kode warna hex" />
+        </label>
+      </div>
       <div class="csg-add">
         <button type="button" class="btn ghost" data-action="add-casing">Tambah casing</button>
         <button type="button" class="btn ghost" data-action="add-liner">Tambah liner</button>
@@ -1011,11 +1069,38 @@
     if (el) el.textContent = wellSummary(well);
   }
 
+  function syncWellColorInputs(wellEl, color) {
+    const swatch = wellEl.querySelector('[data-field="color"]');
+    const hex = wellEl.querySelector('[data-field="colorHex"]');
+    if (swatch) swatch.value = color;
+    if (hex) {
+      hex.value = color;
+      hex.classList.remove("bad");
+    }
+  }
+
   function applyValue(obj, field, input) {
+    if (field === "colorHex") {
+      const raw = String(input.value || "").trim();
+      const hex = raw.startsWith("#") ? raw : `#${raw}`;
+      if (!/^#[0-9a-fA-F]{6}$/.test(hex)) {
+        input.classList.add("bad");
+        return;
+      }
+      obj.color = hex.toUpperCase();
+      input.classList.remove("bad");
+      const wellEl = input.closest("[data-well]");
+      if (wellEl) syncWellColorInputs(wellEl, obj.color);
+      return;
+    }
     if (field === "name" || field === "wellName" || field === "color" || field === "style" || field === "kind") {
       if (field === "style") obj.style = lineKind(input.value);
       else if (field === "kind") obj.kind = input.value === "liner" ? "liner" : "casing";
-      else obj[field === "wellName" ? "name" : field] = input.value;
+      else if (field === "color") {
+        obj.color = wellColor(input.value, 0);
+        const wellEl = input.closest("[data-well]");
+        if (wellEl) syncWellColorInputs(wellEl, obj.color);
+      } else obj[field === "wellName" ? "name" : field] = input.value;
       input.classList.remove("bad");
       return;
     }
@@ -1147,7 +1232,14 @@
   }
 
   function blankWell(index) {
-    return { id: uid(), name: `Sumur ${index}`, tdMd: null, tdTvd: null, casings: [blankCasing()] };
+    return {
+      id: uid(),
+      name: `Sumur ${index}`,
+      color: WELL_COLORS[(Math.max(0, index - 1)) % WELL_COLORS.length],
+      tdMd: null,
+      tdTvd: null,
+      casings: [blankCasing()]
+    };
   }
 
   function blankFormation() {
@@ -1164,8 +1256,8 @@
     return { id: uid(), name, shoeMd, shoeTvd, kind: kind === "liner" ? "liner" : "casing", topTvd: null, style: "solid" };
   }
 
-  function makeWell(name, tdMd, tdTvd, casings) {
-    return { id: uid(), name, tdMd, tdTvd, casings };
+  function makeWell(name, tdMd, tdTvd, casings, color) {
+    return { id: uid(), name, color: wellColor(color, 0), tdMd, tdTvd, casings };
   }
 
   function layer(name, topTvd, baseTvd, color) {
@@ -1196,26 +1288,26 @@
           pipe('13-3/8" Casing', 4209, 3846.28),
           pipe('9-5/8" Casing', 6281, 5661.63),
           pipe('7" Liner', 7729, 6944, "liner")
-        ]),
+        ], "#E8A317"),
         makeWell("OOA-2ST2", 11129, 6767.37, [
           pipe('30" Conductor', 444, 443.97),
           pipe('18-5/8" Casing', 1782, 1695.19),
           pipe('13-3/8" Casing', 3024, 2773.25),
           pipe('9-5/8" Casing', 6675, 4370.95),
           pipe('7" Liner', 8517, 5382.45, "liner")
-        ]),
+        ], "#E8A317"),
         makeWell("OOA-3", 10309, 6828.22, [
           pipe('30" Conductor', 444, 443.97),
           pipe('18-5/8" Casing', 1667, 1666.77),
           pipe('13-3/8" Casing', 4373, 3856.83),
           pipe('9-5/8" Casing', 8020, 5698.47)
-        ]),
+        ], "#E8A317"),
         makeWell("OOA-4", 3717, 3098.05, [
           pipe('30" Conductor', 444, 443.99),
           pipe('13-3/8" Casing', 1778, 1681.14),
           pipe('9-5/8" Casing', 4507, 2726.56)
-        ]),
-        makeWell("OOA-5", null, null, [])
+        ], "#B87333"),
+        makeWell("OOA-5", null, null, [], "#F2D11A")
       ]
     };
   }
@@ -1298,9 +1390,10 @@
         baseTvd: numberOrNull(fm.baseTvd),
         color: fm.color || "#7A3412"
       })),
-      wells: data.wells.map((well) => ({
+      wells: data.wells.map((well, index) => ({
         id: well.id || uid(),
         name: well.name || "",
+        color: wellColor(well.color, index),
         tdMd: numberOrNull(well.tdMd),
         tdTvd: numberOrNull(well.tdTvd),
         casings: Array.isArray(well.casings) ? well.casings.map(normalizeCasing) : []

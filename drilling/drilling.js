@@ -43,6 +43,9 @@
     symbolSize: 9,
     colorRevision: 0,
     legendOff: { depth: false, categories: {} },
+    spread: false,
+    spreadOrder: [],
+    spreadSort: "",
     formations: [],
     progress: [],
     events: []
@@ -60,6 +63,8 @@
   let zoomAnchor = null;
   let zoomWheel = 0;
   let panGesture = null;
+  let spreadDrag = null;
+  let spreadDragId = null;
   let lastScene = null;
   let drawQueued = false;
   let hadStored = false;
@@ -1276,7 +1281,348 @@
     paintLegend(ctx, figure);
   }
 
+  function formationIndex(depth, formations) {
+    for (let i = 0; i < formations.length; i += 1) {
+      const band = formations[i];
+      const last = i === formations.length - 1;
+      if (depth + 1e-9 >= band.top && (last ? depth <= band.base + 1e-9 : depth < band.base - 1e-9)) return i;
+    }
+    return -1;
+  }
+
+  function percentShares(counts) {
+    const total = counts.reduce((sum, n) => sum + n, 0);
+    const shares = counts.map(() => 0);
+    if (!total) return shares;
+    const raw = counts.map((n) => (n * 100) / total);
+    const floors = raw.map((n) => Math.floor(n));
+    let left = 100 - floors.reduce((sum, n) => sum + n, 0);
+    raw.map((n, index) => ({ index, frac: n - Math.floor(n) }))
+      .sort((a, b) => b.frac - a.frac || a.index - b.index)
+      .forEach((item) => {
+        if (left > 0) {
+          floors[item.index] += 1;
+          left -= 1;
+        }
+      });
+    return floors;
+  }
+
+  function spreadCategories() {
+    const present = new Map();
+    state.events.forEach((item) => {
+      const name = (item.category || "").trim();
+      if (!name || !categoryShown(name)) return;
+      const key = categoryKey(name);
+      if (!present.has(key)) {
+        present.set(key, {
+          key,
+          name,
+          color: officialColor(name) || normalizeColor(item.color)
+        });
+      }
+    });
+    const ordered = [];
+    CATEGORIES.forEach((entry) => {
+      const found = present.get(normCat(entry.name));
+      if (found) ordered.push(found);
+    });
+    present.forEach((entry) => {
+      if (!ordered.includes(entry)) ordered.push(entry);
+    });
+    return ordered;
+  }
+
+  function spreadFormations() {
+    const items = [];
+    state.formations.forEach((item) => {
+      const span = formationSpan(item);
+      if (!span) return;
+      items.push({
+        id: item.id,
+        name: (item.name || "").trim() || "Formasi",
+        top: span.top,
+        base: span.base
+      });
+    });
+    items.sort((a, b) => a.top - b.top || a.base - b.base);
+    const order = Array.isArray(state.spreadOrder) ? state.spreadOrder : [];
+    if (!order.length) return items;
+    const rank = new Map(order.map((id, index) => [id, index]));
+    const known = [];
+    const unknown = [];
+    items.forEach((item) => {
+      if (rank.has(item.id)) known.push(item);
+      else unknown.push(item);
+    });
+    known.sort((a, b) => rank.get(a.id) - rank.get(b.id));
+    return known.concat(unknown);
+  }
+
+  function spreadOrderChanged() {
+    const depthIds = [];
+    state.formations.forEach((item) => {
+      if (formationSpan(item)) depthIds.push(item.id);
+    });
+    const order = (Array.isArray(state.spreadOrder) ? state.spreadOrder : []).filter((id) => depthIds.includes(id));
+    if (!order.length) return false;
+    const depthRank = depthIds.slice().sort((a, b) => {
+      const left = state.formations.find((item) => item.id === a);
+      const right = state.formations.find((item) => item.id === b);
+      const leftSpan = formationSpan(left);
+      const rightSpan = formationSpan(right);
+      return leftSpan.top - rightSpan.top || leftSpan.base - rightSpan.base;
+    });
+    return order.join("\0") !== depthRank.filter((id) => order.includes(id)).join("\0");
+  }
+
+  function syncSpreadReset() {
+    const button = document.getElementById("ds-spread-reset");
+    if (!button) return;
+    button.hidden = !state.spread;
+    button.disabled = !spreadOrderChanged();
+  }
+
+  function spreadModel() {
+    let formations = spreadFormations();
+    const byDepth = formations.slice().sort((a, b) => a.top - b.top || a.base - b.base);
+    const categories = spreadCategories();
+    if (!formations.length || !categories.length) {
+      return {
+        empty: true,
+        message: !formations.length
+          ? "Isi batas atas dan bawah formasi. Masalah dikelompokkan menurut rentang itu."
+          : "Nyalakan minimal satu jenis masalah yang punya kedalaman."
+      };
+    }
+    const depthCounts = byDepth.map(() => categories.map(() => 0));
+    let outside = 0;
+    let used = 0;
+    state.events.forEach((item) => {
+      const name = (item.category || "").trim();
+      if (!name || !categoryShown(name)) return;
+      const depth = chartDepth(item);
+      if (depth == null) return;
+      const catIndex = categories.findIndex((entry) => entry.key === categoryKey(name));
+      if (catIndex < 0) return;
+      const fmIndex = formationIndex(depth, byDepth);
+      if (fmIndex < 0) outside += 1;
+      else {
+        depthCounts[fmIndex][catIndex] += 1;
+        used += 1;
+      }
+    });
+    const depthIndex = new Map(byDepth.map((item, index) => [item.id, index]));
+    if (state.spreadSort === "asc" || state.spreadSort === "desc") {
+      const dir = state.spreadSort === "asc" ? 1 : -1;
+      formations = formations.slice().sort((a, b) => {
+        const left = depthCounts[depthIndex.get(a.id)].reduce((sum, count) => sum + count, 0);
+        const right = depthCounts[depthIndex.get(b.id)].reduce((sum, count) => sum + count, 0);
+        return (left - right) * dir;
+      });
+    }
+    const counts = formations.map((item) => depthCounts[depthIndex.get(item.id)].slice());
+    const shares = categories.map((_, catIndex) => percentShares(counts.map((row) => row[catIndex])));
+    let peak = 0;
+    shares.forEach((row) => row.forEach((value) => { if (value > peak) peak = value; }));
+    const axisMax = Math.min(100, Math.max(10, Math.ceil(peak / 10) * 10));
+    return { empty: false, formations, categories, counts, shares, outside, used, axisMax };
+  }
+
+  function wrapLines(text, font, maxWidth, limit) {
+    const words = String(text || "").split(/\s+/).filter(Boolean);
+    if (!words.length) return [""];
+    const lines = [];
+    let line = "";
+    words.forEach((word) => {
+      const next = line ? `${line} ${word}` : word;
+      if (line && textWidth(font, next) > maxWidth) {
+        lines.push(line);
+        line = word;
+      } else line = next;
+    });
+    if (line) lines.push(line);
+    return lines.slice(0, limit);
+  }
+
+  function renderSpreadCanvas(canvas, scale) {
+    const model = spreadModel();
+    if (model.empty) {
+      const w = 1080;
+      const h = 420;
+      canvas.width = Math.round(w * scale);
+      canvas.height = Math.round(h * scale);
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = MUTED;
+      ctx.font = FONT;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(model.message, w / 2, h / 2);
+      return { w, h, empty: true };
+    }
+    const barH = 12;
+    const barGap = 4;
+    const groupH = Math.max(46, model.categories.length * (barH + barGap) + 16);
+    const plotH = model.formations.length * groupH;
+    const tableHead = 46;
+    const tableRow = 26;
+    const labelW = Math.min(260, Math.max(188, 36 + model.categories.reduce((max, cat) => Math.max(max, textWidth(FONT, cat.name)), 0)));
+    const w = Math.max(1080, 48 + labelW + model.formations.length * 96);
+    const h = 86 + plotH + 36 + tableHead + model.categories.length * tableRow + 52;
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+
+    const nameW = Math.min(240, Math.max(150, model.formations.reduce((max, fm) => Math.max(max, textWidth(FONT, fm.name)), 0) + 24));
+    const plotLeft = nameW + 20;
+    const plotRight = w - 28;
+    const plotW = plotRight - plotLeft;
+    const plotTop = 78;
+    const title = "Analisa Persebaran Masalah Per Formasi";
+    ctx.fillStyle = "#1e3a5f";
+    ctx.font = '700 22px "Segoe UI", Arial, Helvetica, sans-serif';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillText(title, w / 2, 18);
+
+    ctx.strokeStyle = GRID;
+    ctx.lineWidth = 1;
+    ctx.fillStyle = MUTED;
+    ctx.font = FONT;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    for (let tick = 0; tick <= model.axisMax; tick += 10) {
+      const x = plotLeft + (tick / model.axisMax) * plotW;
+      ctx.beginPath();
+      ctx.moveTo(crisp(x), plotTop);
+      ctx.lineTo(crisp(x), plotTop + plotH);
+      ctx.stroke();
+      ctx.fillText(`${tick}%`, x, plotTop - 8);
+    }
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.strokeRect(plotLeft + 0.5, plotTop + 0.5, plotW - 1, plotH - 1);
+
+    const bands = [];
+    model.formations.forEach((fm, index) => {
+      const y0 = plotTop + index * groupH;
+      bands.push({ id: fm.id, y0, y1: y0 + groupH });
+      if (fm.id === spreadDragId) {
+        ctx.fillStyle = "#e8eef8";
+        ctx.fillRect(6, y0 + 2, plotLeft - 14, groupH - 4);
+      }
+      ctx.fillStyle = "#94a3b8";
+      const gripY = y0 + groupH / 2 - 6;
+      for (let grip = 0; grip < 3; grip += 1) ctx.fillRect(8, gripY + grip * 5, 12, 2);
+      ctx.strokeStyle = "#eef2f6";
+      ctx.beginPath();
+      ctx.moveTo(plotLeft, crisp(y0 + groupH));
+      ctx.lineTo(plotRight, crisp(y0 + groupH));
+      ctx.stroke();
+      ctx.fillStyle = AXIS;
+      ctx.font = FONT;
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      const lines = wrapLines(fm.name, FONT, nameW - 8, 2);
+      const block = lines.length * 15;
+      lines.forEach((line, lineIndex) => {
+        ctx.fillText(line, plotLeft - 12, y0 + groupH / 2 - block / 2 + 7 + lineIndex * 15);
+      });
+      model.categories.forEach((cat, catIndex) => {
+        const share = model.shares[catIndex][index];
+        if (!share) return;
+        const y = y0 + 10 + catIndex * (barH + barGap);
+        const width = Math.max(2, (share / model.axisMax) * plotW);
+        ctx.fillStyle = cat.color;
+        ctx.fillRect(plotLeft, y, width, barH);
+      });
+    });
+
+    if (model.outside) {
+      ctx.fillStyle = MUTED;
+      ctx.font = FONT;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillText(`${model.outside} masalah di luar batas formasi tidak masuk hitungan.`, plotLeft, plotTop + plotH + 8);
+    }
+
+    const columns = model.formations.slice().reverse();
+    const tableTop = plotTop + plotH + 28;
+    const colW = (w - 36 - labelW) / columns.length;
+    const tableLeft = 18;
+    ctx.font = FONT;
+    ctx.textBaseline = "middle";
+    ctx.strokeStyle = "#d5dde6";
+    ctx.lineWidth = 1;
+    ctx.fillStyle = "#f8fafc";
+    ctx.fillRect(tableLeft, tableTop, labelW + colW * columns.length, tableHead);
+    columns.forEach((fm, index) => {
+      const x = tableLeft + labelW + index * colW;
+      ctx.fillStyle = AXIS;
+      ctx.font = FONT_BOLD;
+      ctx.textAlign = "center";
+      const lines = wrapLines(fm.name, FONT_BOLD, colW - 8, 2);
+      lines.forEach((line, lineIndex) => {
+        ctx.fillText(line, x + colW / 2, tableTop + 16 + lineIndex * 15);
+      });
+    });
+    model.categories.forEach((cat, catIndex) => {
+      const y = tableTop + tableHead + catIndex * tableRow;
+      ctx.fillStyle = catIndex % 2 ? "#f8fafc" : "#ffffff";
+      ctx.fillRect(tableLeft, y, labelW + colW * columns.length, tableRow);
+      ctx.fillStyle = cat.color;
+      ctx.fillRect(tableLeft + 10, y + 7, 12, 12);
+      ctx.fillStyle = AXIS;
+      ctx.font = FONT;
+      ctx.textAlign = "left";
+      ctx.fillText(cat.name, tableLeft + 28, y + tableRow / 2);
+      columns.forEach((fm, colIndex) => {
+        const fmIndex = model.formations.indexOf(fm);
+        const share = model.shares[catIndex][fmIndex];
+        ctx.textAlign = "center";
+        ctx.fillText(`${share}%`, tableLeft + labelW + colIndex * colW + colW / 2, y + tableRow / 2);
+      });
+    });
+    const tableH = tableHead + model.categories.length * tableRow;
+    const tableW = labelW + colW * columns.length;
+    ctx.strokeStyle = "#d5dde6";
+    ctx.strokeRect(tableLeft + 0.5, tableTop + 0.5, tableW - 1, tableH - 1);
+    for (let i = 1; i <= columns.length; i += 1) {
+      const x = tableLeft + labelW + (i - 1) * colW;
+      ctx.beginPath();
+      ctx.moveTo(crisp(x), tableTop);
+      ctx.lineTo(crisp(x), tableTop + tableH);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.moveTo(tableLeft, crisp(tableTop + tableHead));
+    ctx.lineTo(tableLeft + tableW, crisp(tableTop + tableHead));
+    ctx.stroke();
+
+    const legendY = tableTop + tableH + 22;
+    ctx.font = FONT;
+    const pieces = model.categories.map((cat) => ({ cat, width: 18 + textWidth(FONT, cat.name) }));
+    const legendW = pieces.reduce((sum, piece) => sum + piece.width, 0) + (pieces.length - 1) * 16;
+    let lx = (w - legendW) / 2;
+    pieces.forEach((piece) => {
+      ctx.fillStyle = piece.cat.color;
+      ctx.fillRect(lx, legendY - 6, 12, 12);
+      ctx.fillStyle = AXIS;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(piece.cat.name, lx + 16, legendY);
+      lx += piece.width + 16;
+    });
+    return { w, h, empty: false, plotLeft, bands };
+  }
+
   function renderCanvas(canvas, scale) {
+    if (state.spread) return renderSpreadCanvas(canvas, scale);
     const figure = scene();
     canvas.width = Math.max(1, Math.round(figure.w * scale));
     canvas.height = Math.max(1, Math.round(figure.h * scale));
@@ -1344,12 +1690,48 @@
     applyZoom();
   }
 
+  function scenePoint(event) {
+    const canvas = document.getElementById("ds-chart");
+    if (!canvas || !lastScene) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    return {
+      x: (event.clientX - rect.left) / rect.width * lastScene.w,
+      y: (event.clientY - rect.top) / rect.height * lastScene.h
+    };
+  }
+
+  function spreadBandAt(point) {
+    if (!state.spread || state.spreadSort || !lastScene || !lastScene.bands || !point) return -1;
+    if (point.x > lastScene.plotLeft) return -1;
+    return lastScene.bands.findIndex((band) => point.y >= band.y0 && point.y < band.y1);
+  }
+
+  function moveSpreadFormation(formationId, targetIndex) {
+    const ids = spreadFormations().map((item) => item.id);
+    const from = ids.indexOf(formationId);
+    if (from < 0 || targetIndex < 0 || targetIndex >= ids.length || from === targetIndex) return;
+    ids.splice(from, 1);
+    ids.splice(targetIndex, 0, formationId);
+    state.spreadOrder = ids;
+    requestDraw();
+  }
+
   function bindChartView() {
     const canvas = document.getElementById("ds-chart");
     const sheet = document.getElementById("ds-sheet");
     if (!canvas || !sheet) return;
     canvas.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
+      const bandIndex = spreadBandAt(scenePoint(event));
+      if (bandIndex >= 0 && lastScene.bands[bandIndex]) {
+        spreadDrag = { id: event.pointerId };
+        spreadDragId = lastScene.bands[bandIndex].id;
+        canvas.classList.add("ds-dragging");
+        try { canvas.setPointerCapture(event.pointerId); } catch (err) { /* Pointer sudah lepas. */ }
+        requestDraw();
+        return;
+      }
       panGesture = {
         id: event.pointerId,
         x: event.clientX,
@@ -1361,11 +1743,31 @@
       try { canvas.setPointerCapture(event.pointerId); } catch (err) { /* Pointer sudah lepas. */ }
     });
     canvas.addEventListener("pointermove", (event) => {
-      if (!panGesture || event.pointerId !== panGesture.id) return;
+      if (spreadDrag && event.pointerId === spreadDrag.id) {
+        const point = scenePoint(event);
+        if (!point || !lastScene || !lastScene.bands) return;
+        let target = lastScene.bands.findIndex((band) => point.y >= band.y0 && point.y < band.y1);
+        if (target < 0) target = point.y < lastScene.bands[0].y0 ? 0 : lastScene.bands.length - 1;
+        moveSpreadFormation(spreadDragId, target);
+        return;
+      }
+      if (!panGesture || event.pointerId !== panGesture.id) {
+        const over = spreadBandAt(scenePoint(event)) >= 0;
+        canvas.classList.toggle("ds-reorder", over);
+        return;
+      }
       sheet.scrollLeft = panGesture.left - (event.clientX - panGesture.x);
       sheet.scrollTop = panGesture.top - (event.clientY - panGesture.y);
     });
     const endPan = (event) => {
+      if (spreadDrag && event && event.pointerId === spreadDrag.id) {
+        spreadDrag = null;
+        spreadDragId = null;
+        canvas.classList.remove("ds-dragging");
+        persist();
+        requestDraw();
+        return;
+      }
       if (!panGesture || (event && event.pointerId !== panGesture.id)) return;
       panGesture = null;
       canvas.classList.remove("panning");
@@ -1389,7 +1791,7 @@
 
   function legendEntries() {
     const entries = [];
-    if (curveSource().points.length) {
+    if (!state.spread && curveSource().points.length) {
       entries.push({
         kind: "depth",
         key: "depth",
@@ -1462,7 +1864,13 @@
     if (!panel || !host || !count) return;
     const entries = legendEntries();
     const shown = state.events.filter((item) => categoryShown(item.category)).length;
-    const signature = JSON.stringify({ shown, entries });
+    const signature = JSON.stringify({ shown, spread: state.spread, entries });
+    const note = document.getElementById("ds-legend-note");
+    if (note) {
+      note.textContent = state.spread
+        ? `Masalah dikelompokkan menurut batas formasi pada ${depthUnitLabel()}. Seret nama formasi di kiri grafik untuk mengubah urutan, lalu Reset urutan untuk kembali ke susunan kedalaman. Matikan satu jenis untuk mengeluarkannya.`
+        : "Angka ini di luar grafik dan tidak ikut terunduh. Garis kedalaman tidak dihitung sebagai masalah.";
+    }
     if (signature === legendSignature) return;
     legendSignature = signature;
     panel.hidden = !entries.length;
@@ -1495,6 +1903,7 @@
     try {
       lastScene = renderCanvas(canvas, 2);
       renderLegendPanel();
+      syncSpreadReset();
       applyZoom();
       const empty = !!lastScene.empty;
       ["ds-png", "ds-jpg", "ds-pdf"].forEach((id) => {
@@ -1516,7 +1925,7 @@
   }
 
   function fileStem() {
-    const raw = figureTitle() || "drilling-summary";
+    const raw = state.spread ? "Analisa Persebaran Masalah" : (figureTitle() || "drilling-summary");
     return raw.replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ").slice(0, 80);
   }
 
@@ -2140,6 +2549,9 @@
     state.symbolSize = clampSymbolSize(data.symbolSize);
     state.colorRevision = Number(data.colorRevision) || 0;
     state.legendOff = normalizeLegendOff(data.legendOff);
+    state.spread = data.spread === true;
+    state.spreadOrder = Array.isArray(data.spreadOrder) ? data.spreadOrder.filter((id) => typeof id === "string" && id) : [];
+    state.spreadSort = data.spreadSort === "asc" || data.spreadSort === "desc" ? data.spreadSort : "";
     state.formations = data.formations || [];
     state.progress = data.progress || [];
     state.events = data.events || [];
@@ -2151,6 +2563,28 @@
     const onTvd = depthMode() === "tvd";
     if (md) md.setAttribute("aria-pressed", onTvd ? "false" : "true");
     if (tvd) tvd.setAttribute("aria-pressed", onTvd ? "true" : "false");
+    const spread = document.getElementById("ds-spread");
+    if (spread) spread.setAttribute("aria-pressed", state.spread ? "true" : "false");
+    syncSpreadReset();
+    syncSpreadFilter();
+  }
+
+  function closeSpreadFilter() {
+    const pop = document.getElementById("ds-filter-pop");
+    const button = document.getElementById("ds-filter-btn");
+    if (pop) pop.hidden = true;
+    if (button) button.setAttribute("aria-expanded", "false");
+  }
+
+  function syncSpreadFilter() {
+    const root = document.getElementById("ds-filter");
+    const button = document.getElementById("ds-filter-btn");
+    if (root) root.hidden = !state.spread;
+    if (!state.spread) closeSpreadFilter();
+    if (button) button.setAttribute("aria-pressed", state.spreadSort ? "true" : "false");
+    document.querySelectorAll('input[name="ds-spread-sort"]').forEach((input) => {
+      input.checked = input.value === state.spreadSort;
+    });
   }
 
   function setDepthMode(mode) {
@@ -2211,6 +2645,9 @@
         symbolSize: state.symbolSize,
         colorRevision: state.colorRevision,
         legendOff: normalizeLegendOff(state.legendOff),
+        spread: state.spread,
+        spreadOrder: state.spreadOrder.slice(),
+        spreadSort: state.spreadSort,
         formations: state.formations,
         progress: state.progress,
         events: state.events
@@ -2341,6 +2778,9 @@
       symbolSize: state.symbolSize,
       colorRevision: state.colorRevision,
       legendOff: normalizeLegendOff(state.legendOff),
+      spread: state.spread,
+      spreadOrder: state.spreadOrder.slice(),
+      spreadSort: state.spreadSort,
       formations: state.formations,
       progress: state.progress,
       events: state.events
@@ -2714,6 +3154,43 @@
       if (!text) return;
       event.preventDefault();
       applyFormationPaste(text);
+    });
+    document.getElementById("ds-spread").addEventListener("click", () => {
+      state.spread = !state.spread;
+      syncDepthMode();
+      persist();
+      requestDraw();
+    });
+    document.getElementById("ds-spread-reset").addEventListener("click", () => {
+      if (!spreadOrderChanged()) return;
+      state.spreadOrder = [];
+      syncSpreadReset();
+      persist();
+      requestDraw();
+    });
+    const filterButton = document.getElementById("ds-filter-btn");
+    const filterPop = document.getElementById("ds-filter-pop");
+    filterButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const open = filterPop.hidden;
+      filterPop.hidden = !open;
+      filterButton.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+    filterPop.addEventListener("change", (event) => {
+      const value = event.target && event.target.value;
+      state.spreadSort = value === "asc" || value === "desc" ? value : "";
+      closeSpreadFilter();
+      syncSpreadFilter();
+      persist();
+      requestDraw();
+    });
+    document.addEventListener("click", (event) => {
+      const root = document.getElementById("ds-filter");
+      if (!root || root.contains(event.target)) return;
+      closeSpreadFilter();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeSpreadFilter();
     });
     document.getElementById("ds-mode-md").addEventListener("click", () => setDepthMode("md"));
     document.getElementById("ds-mode-tvd").addEventListener("click", () => setDepthMode("tvd"));
