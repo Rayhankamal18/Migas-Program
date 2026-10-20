@@ -318,7 +318,7 @@
             <option value="">Tidak ditampilkan</option>
           </select>
         </label>
-        <p class="micro">Gambar casing diambil dari sumur yang sudah diisi di Casing Setting Depth, lalu diletakkan di kiri grafik.</p>
+        <p class="micro">Gambar casing diambil dari sumur yang sudah diisi di Casing Setting Depth, lalu diletakkan di kiri grafik. Memilih sumur juga mengisi TD ft-MD dan TD ft-TVD dari data sumur itu.</p>
       </section>
 
       <section>
@@ -410,13 +410,14 @@
         <label class="ds-symbol-field">Ukuran simbol
           <input id="ds-symbol" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="9" />
         </label>
-        <p class="micro">Klik kolom Day, lalu tempel dari Excel. Setiap baris yang disalin menjadi satu masalah, urutannya Day, ft-MD, lalu ft-TVD. Kategori dipilih sendiri. Untuk beberapa baris sekaligus, centang atau seret kotak di kiri, lalu terapkan satu kategori. Ukuran simbol mengatur besar penanda di grafik.</p>
+        <p class="micro">Klik kolom Day, lalu tempel dari Excel. Setiap baris yang disalin menjadi satu masalah, urutannya Day, ft-MD, lalu ft-TVD. Kategori dipilih sendiri. Untuk beberapa baris sekaligus, centang atau seret kotak di kiri, lalu terapkan kategori atau hapus yang dipilih. Ukuran simbol mengatur besar penanda di grafik.</p>
         <div class="ds-bulk">
           <p class="micro" id="ds-bulk-count">Belum ada masalah dipilih.</p>
           <label>Kategori untuk yang dipilih
             <select id="ds-bulk-category"></select>
           </label>
           <button type="button" class="btn" id="ds-bulk-apply" disabled>Terapkan</button>
+          <button type="button" class="btn ghost" id="ds-bulk-delete" disabled>Hapus dipilih</button>
         </div>
         <div id="ds-events"></div>
         <button type="button" class="btn ghost" id="ds-add-event">Tambah masalah</button>
@@ -517,7 +518,7 @@
   <script src="shared/vendor/jspdf.umd.min.js"></script>
   <script src="azimuth/azimuth.js"></script>
   <script src="casing/casing.js"></script>
-  <script src="drilling/drilling.js?v=20261013e"></script>
+  <script src="drilling/drilling.js?v=20261020b"></script>
   <script src="boxplot/boxplot.js?v=20261012j"></script>
 </body>
 </html>
