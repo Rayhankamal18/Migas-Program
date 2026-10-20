@@ -379,6 +379,33 @@
     return casingWells().find((well) => well.id === state.casingWellId) || null;
   }
 
+  function applyTdFromCasing(well) {
+    if (!well) return false;
+    const unit = casingMeta().unit;
+    const tdMd = positiveOrNull(toChartFt(well.tdMd, unit));
+    const tdTvd = positiveOrNull(toChartFt(well.tdTvd, unit));
+    let changed = false;
+    if (tdMd != null) {
+      state.td = tdMd;
+      changed = true;
+    }
+    if (tdTvd != null) {
+      state.tdTvd = tdTvd;
+      changed = true;
+    }
+    const td = document.getElementById("ds-td");
+    const tdTvdInput = document.getElementById("ds-td-tvd");
+    if (td && tdMd != null) {
+      td.value = numToInput(state.td);
+      td.classList.remove("bad");
+    }
+    if (tdTvdInput && tdTvd != null) {
+      tdTvdInput.value = numToInput(state.tdTvd);
+      tdTvdInput.classList.remove("bad");
+    }
+    return changed;
+  }
+
   function toChartFt(value, unit) {
     if (value == null || Number.isNaN(Number(value))) return null;
     const n = Number(value);
@@ -2101,6 +2128,7 @@
     }
     const count = document.getElementById("ds-bulk-count");
     const apply = document.getElementById("ds-bulk-apply");
+    const remove = document.getElementById("ds-bulk-delete");
     const category = document.getElementById("ds-bulk-category");
     if (count) {
       count.textContent = selectedEvents.size
@@ -2108,6 +2136,7 @@
         : "Belum ada masalah dipilih.";
     }
     if (apply) apply.disabled = !selectedEvents.size || !category || !category.value;
+    if (remove) remove.disabled = !selectedEvents.size;
   }
 
   function eventIdsBetween(from, to) {
@@ -2225,6 +2254,20 @@
     renderList("event");
     requestDraw();
     setStatus(count === 1 ? `1 masalah diubah ke ${name}.` : `${count} masalah diubah ke ${name}.`);
+  }
+
+  function deleteSelectedEvents() {
+    if (!selectedEvents.size) return;
+    const count = selectedEvents.size;
+    const top = panelScroll();
+    state.events = state.events.filter((item) => !selectedEvents.has(item.id));
+    selectedEvents.clear();
+    selectAnchor = -1;
+    persist();
+    renderList("event");
+    panelScroll(top);
+    requestDraw();
+    setStatus(count === 1 ? "1 masalah dihapus." : `${count} masalah dihapus.`);
   }
 
   function formationHtml(item, index, total) {
@@ -3210,13 +3253,24 @@
     }
     const bulkApply = document.getElementById("ds-bulk-apply");
     if (bulkApply) bulkApply.addEventListener("click", applyBulkCategory);
+    const bulkDelete = document.getElementById("ds-bulk-delete");
+    if (bulkDelete) bulkDelete.addEventListener("click", deleteSelectedEvents);
     document.getElementById("ds-add-fm").addEventListener("click", addFormation);
     document.getElementById("ds-casing-well").addEventListener("change", (event) => {
       const well = casingWells().find((item) => item.id === event.target.value);
       state.casingWellId = event.target.value;
       state.casingWellName = well ? (well.name || "").trim() : "";
+      const filled = applyTdFromCasing(well);
       persist();
       requestDraw();
+      if (filled) {
+        const parts = [];
+        if (state.td != null) parts.push(`TD MD ${fmt(state.td)}`);
+        if (state.tdTvd != null) parts.push(`TD TVD ${fmt(state.tdTvd)}`);
+        setStatus(parts.length
+          ? `TD dari casing ${state.casingWellName || "sumur"}: ${parts.join(", ")}.`
+          : "Sumur casing dipilih.");
+      }
     });
     document.getElementById("ds-show-casing").addEventListener("change", (event) => {
       state.showCasing = event.target.checked;
