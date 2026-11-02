@@ -13,6 +13,10 @@
   const ZOOM_STEP = 0.25;
 
   const state = {
+    // multi-plot: each plot has its own title/settings/columns
+    plots: [],
+    activePlotId: "",
+    // legacy flat fields kept in sync with active plot for drawing
     title: "Mud Weight Distribution by Formation",
     yLabel: "Mud Weight (unit as recorded)",
     xLabel: "Formation",
@@ -23,6 +27,134 @@
     numbers: { min: false, q1: false, median: false, mean: false, q3: false, max: false, outlier: false },
     columns: []
   };
+
+  function plotUid() {
+    return "bp" + Math.random().toString(36).slice(2, 10);
+  }
+
+  function emptyPlot(name) {
+    return {
+      id: plotUid(),
+      name: name || ("Plot " + (state.plots.length + 1)),
+      title: name || "Mud Weight Distribution by Formation",
+      yLabel: "Mud Weight (unit as recorded)",
+      xLabel: "Formation",
+      decimalComma: true,
+      yMin: null,
+      yMax: null,
+      show: { box: true, median: true, mean: true, whisker: true, outlier: true, legend: true },
+      numbers: { min: false, q1: false, median: false, mean: false, q3: false, max: false, outlier: false },
+      columns: []
+    };
+  }
+
+  function activePlot() {
+    if (!state.plots.length) {
+      const p = emptyPlot("Plot 1");
+      state.plots = [p];
+      state.activePlotId = p.id;
+      return p;
+    }
+    let p = state.plots.find((x) => x.id === state.activePlotId);
+    if (!p) {
+      p = state.plots[0];
+      state.activePlotId = p.id;
+    }
+    return p;
+  }
+
+  function pullActiveToPlot() {
+    const p = activePlot();
+    p.title = state.title;
+    p.yLabel = state.yLabel;
+    p.xLabel = state.xLabel;
+    p.decimalComma = state.decimalComma;
+    p.yMin = state.yMin;
+    p.yMax = state.yMax;
+    p.show = Object.assign({}, state.show);
+    p.numbers = Object.assign({}, state.numbers);
+    p.columns = state.columns;
+  }
+
+  function pushPlotToActive() {
+    const p = activePlot();
+    state.title = p.title;
+    state.yLabel = p.yLabel;
+    state.xLabel = p.xLabel;
+    state.decimalComma = p.decimalComma;
+    state.yMin = p.yMin;
+    state.yMax = p.yMax;
+    state.show = Object.assign({}, p.show);
+    state.numbers = Object.assign({}, p.numbers);
+    state.columns = p.columns || [];
+  }
+
+  function renderPlotList() {
+    const host = document.getElementById("bx-plot-list");
+    const count = document.getElementById("bx-plot-count");
+    if (count) count.textContent = String(state.plots.length);
+    if (!host) return;
+    host.innerHTML = state.plots
+      .map((p) => {
+        const on = p.id === state.activePlotId;
+        return (
+          '<div class="bx-plot-row' + (on ? " active" : "") + '">' +
+          '<button type="button" class="bx-plot-select" data-plot="' + p.id + '">' +
+          (on ? "● " : "") +
+          (p.name || p.title || "Plot") +
+          "</button>" +
+          '<button type="button" class="btn ghost bx-plot-del" data-plot-del="' + p.id + '" title="Delete plot">×</button>' +
+          "</div>"
+        );
+      })
+      .join("");
+  }
+
+  function switchPlot(id) {
+    if (!id || id === state.activePlotId) return;
+    pullActiveToPlot();
+    if (!state.plots.some((p) => p.id === id)) return;
+    state.activePlotId = id;
+    pushPlotToActive();
+    applyChrome();
+    renderTable();
+    renderPlotList();
+    requestDraw();
+    persist();
+  }
+
+  function addPlot() {
+    pullActiveToPlot();
+    const p = emptyPlot("Plot " + (state.plots.length + 1));
+    state.plots.push(p);
+    state.activePlotId = p.id;
+    pushPlotToActive();
+    applyChrome();
+    renderTable();
+    renderPlotList();
+    requestDraw();
+    persist();
+    setStatus("New plot added. Previous plots are kept.");
+  }
+
+  function deletePlot(id) {
+    if (state.plots.length <= 1) {
+      setStatus("At least one plot must remain.");
+      return;
+    }
+    if (!confirm("Delete this plot? This cannot be undone.")) return;
+    pullActiveToPlot();
+    state.plots = state.plots.filter((p) => p.id !== id);
+    if (state.activePlotId === id) {
+      state.activePlotId = state.plots[0].id;
+      pushPlotToActive();
+      applyChrome();
+      renderTable();
+    }
+    renderPlotList();
+    requestDraw();
+    persist();
+  }
 
   const NUMBER_ROWS = [
     { key: "min", label: "Min" },
@@ -103,7 +235,8 @@
   }
 
   function finiteValues(item) {
-    return item.values.filter((value) => value != null && Number.isFinite(value));
+    // 0 is treated as empty/padding (common when exporting sparse formation columns)
+    return item.values.filter((value) => value != null && Number.isFinite(value) && value !== 0);
   }
 
   function quantile(sorted, p) {
@@ -723,22 +856,51 @@
   function normalizeColumn(raw, index) {
     const values = Array.isArray(raw && raw.values) ? raw.values.map((value) => {
       const n = Number(value);
-      return Number.isFinite(n) ? n : null;
+      if (!Number.isFinite(n) || n === 0) return null;
+      return n;
     }) : [];
     return column(raw && raw.name, values, raw && raw.color, index);
   }
 
   function ingest(data) {
-    if (!data || !Array.isArray(data.columns)) return false;
-    state.title = data.title || "Mud Weight Distribution by Formation";
-    state.yLabel = data.yLabel || "Mud Weight (unit as recorded)";
-    state.xLabel = data.xLabel || "Formation";
-    state.decimalComma = data.decimalComma !== false;
-    state.yMin = optionalLimit(data.yMin);
-    state.yMax = optionalLimit(data.yMax);
-    applyFlags(state.show, data.show);
-    applyFlags(state.numbers, data.numbers);
-    state.columns = data.columns.map(normalizeColumn);
+    if (!data) return false;
+    if (Array.isArray(data.plots) && data.plots.length) {
+      state.plots = data.plots.map((raw, idx) => {
+        const p = emptyPlot((raw && raw.name) || ("Plot " + (idx + 1)));
+        p.id = (raw && raw.id) || p.id;
+        p.name = (raw && raw.name) || p.name;
+        p.title = (raw && raw.title) || p.title;
+        p.yLabel = (raw && raw.yLabel) || p.yLabel;
+        p.xLabel = (raw && raw.xLabel) || p.xLabel;
+        p.decimalComma = raw && raw.decimalComma !== false;
+        p.yMin = optionalLimit(raw && raw.yMin);
+        p.yMax = optionalLimit(raw && raw.yMax);
+        if (raw && raw.show) applyFlags(p.show, raw.show);
+        if (raw && raw.numbers) applyFlags(p.numbers, raw.numbers);
+        p.columns = Array.isArray(raw && raw.columns) ? raw.columns.map(normalizeColumn) : [];
+        return p;
+      });
+      state.activePlotId = data.activePlotId && state.plots.some((p) => p.id === data.activePlotId)
+        ? data.activePlotId
+        : state.plots[0].id;
+      pushPlotToActive();
+      return true;
+    }
+    // legacy single-plot JSON
+    if (!Array.isArray(data.columns)) return false;
+    const p = emptyPlot(data.title || "Plot 1");
+    p.title = data.title || p.title;
+    p.yLabel = data.yLabel || p.yLabel;
+    p.xLabel = data.xLabel || p.xLabel;
+    p.decimalComma = data.decimalComma !== false;
+    p.yMin = optionalLimit(data.yMin);
+    p.yMax = optionalLimit(data.yMax);
+    if (data.show) applyFlags(p.show, data.show);
+    if (data.numbers) applyFlags(p.numbers, data.numbers);
+    p.columns = data.columns.map(normalizeColumn);
+    state.plots = [p];
+    state.activePlotId = p.id;
+    pushPlotToActive();
     return true;
   }
 
@@ -753,7 +915,9 @@
   }
 
   function snapshot() {
+    pullActiveToPlot();
     return {
+      // legacy single-plot fields (active plot) for older readers
       title: state.title,
       yLabel: state.yLabel,
       xLabel: state.xLabel,
@@ -766,7 +930,27 @@
         id: item.id,
         name: item.name,
         color: item.color,
-        values: item.values.slice()
+        values: item.values.map((v) => (v != null && Number(v) !== 0 ? v : null))
+      })),
+      // multi-plot
+      activePlotId: state.activePlotId,
+      plots: state.plots.map((p) => ({
+        id: p.id,
+        name: p.name,
+        title: p.title,
+        yLabel: p.yLabel,
+        xLabel: p.xLabel,
+        decimalComma: p.decimalComma,
+        yMin: p.yMin,
+        yMax: p.yMax,
+        show: Object.assign({}, p.show),
+        numbers: Object.assign({}, p.numbers),
+        columns: (p.columns || []).map((item) => ({
+          id: item.id,
+          name: item.name,
+          color: item.color,
+          values: (item.values || []).map((v) => (v != null && Number(v) !== 0 ? v : null))
+        }))
       }))
     };
   }
@@ -776,7 +960,11 @@
     applyChrome();
     persist();
     renderTable();
+    renderPlotList();
+    // Draw twice: once now, once after layout (panel may be hidden during project open)
     requestDraw();
+    setTimeout(() => requestDraw(), 50);
+    setTimeout(() => requestDraw(), 250);
     return true;
   }
 
@@ -980,6 +1168,29 @@
   }
 
   function bind() {
+    const addPlotBtn = document.getElementById("bx-add-plot");
+    if (addPlotBtn) addPlotBtn.addEventListener("click", addPlot);
+    const plotList = document.getElementById("bx-plot-list");
+    if (plotList) {
+      plotList.addEventListener("click", (event) => {
+        const sel = event.target.closest("[data-plot]");
+        if (sel) {
+          switchPlot(sel.getAttribute("data-plot"));
+          return;
+        }
+        const del = event.target.closest("[data-plot-del]");
+        if (del) deletePlot(del.getAttribute("data-plot-del"));
+      });
+    }
+    const rename = document.getElementById("bx-plot-name");
+    if (rename) {
+      rename.addEventListener("change", () => {
+        const p = activePlot();
+        p.name = rename.value.trim() || p.name;
+        renderPlotList();
+        persist();
+      });
+    }
     const table = document.getElementById("bx-table");
     table.addEventListener("input", onTableInput);
     table.addEventListener("change", onTableChange);
@@ -1058,14 +1269,26 @@
   function init() {
     applyChrome();
     renderTable();
+    renderPlotList();
     bind();
     const panel = document.getElementById("panel-boxplot");
     if (panel && !panel.hidden) draw();
-    setStatus(hadStored ? "Data box plot terakhir dibuka kembali." : "Contoh mud weight dimuat. Tempel data Excel untuk menggantinya.");
+    setStatus(hadStored ? "Box plot data restored." : "Sample mud weight loaded. Paste Excel data to replace.");
   }
 
   hadStored = loadStored();
-  if (!hadStored) state.columns = sampleColumns();
+  if (!hadStored) {
+    const p = emptyPlot("Plot 1");
+    p.columns = sampleColumns();
+    state.plots = [p];
+    state.activePlotId = p.id;
+    pushPlotToActive();
+  } else if (!state.plots.length) {
+    const p = emptyPlot(state.title || "Plot 1");
+    p.columns = state.columns || [];
+    state.plots = [p];
+    state.activePlotId = p.id;
+  }
   window.BoxWhisker = { draw, snapshot, load: loadProject };
   document.addEventListener("DOMContentLoaded", init);
 })();

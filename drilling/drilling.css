@@ -391,3 +391,106 @@
 .ds-event textarea { min-height: 64px; }
 
 .ds-npt-field { max-width: 160px; margin-bottom: 8px; }
+
+/* Multi-well list */
+.ds-wells {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.ds-well-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 4px;
+  align-items: center;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 4px 6px;
+  background: #f8fafc;
+}
+.ds-well-row.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+.ds-well-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  padding: 4px 2px;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+}
+.ds-well-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(0,0,0,.15);
+}
+.ds-well-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 13px;
+}
+.ds-well-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-radius: 999px;
+  padding: 1px 6px;
+  margin-left: 4px;
+}
+.ds-well-vis {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+.ds-well-del {
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.ds-well-del:hover {
+  color: #dc2626;
+  background: #fee2e2;
+}
+.ds-view-mode .btn[aria-pressed="true"] {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
+
+.ds-well-row {
+  grid-template-columns: auto 1fr auto auto;
+}
+.ds-well-rename {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  background: #fff;
+}
+.ds-well-row.active .ds-well-rename {
+  border-color: #93c5fd;
+}
+.ds-well-select {
+  padding: 4px;
+}

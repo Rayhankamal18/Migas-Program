@@ -22,3 +22,21 @@ Angka dan tombol itu berada di luar gambar. Unduhan hanya berisi grafik. Keteran
 ## Simpan dan buka lagi
 
 **Simpan** menulis satu berkas JSON untuk ketiga chart. **Buka** memuat berkas itu kembali. Isian terakhir juga tersimpan di browser lewat local storage.
+
+## Multi-well Drilling Summary (update 2026-10-26)
+
+Drilling Summary now supports multiple wells:
+
+- **Tambah sumur / Duplikat** — each well keeps its own progress, events, formations, TD, and casing link.
+- **Satu sumur** — edit the active well (click a well in the list to switch without losing data).
+- **Bandingkan semua** — overlay progress curves of all visible wells on one chart (toggle eye checkbox per well).
+- **Kosongkan** — clears only the active well; other wells stay intact.
+- Project JSON and localStorage remain backward-compatible with older single-well files.
+
+## 2026-10-29 updates
+
+- **Save / Load** (device + VPS via API)
+- **Box & Whisker multi-plot** (add plots without deleting)
+- **AutoML** section (AutoML-Alex on VPS)
+
+See `SETUP_VPS.md`.
