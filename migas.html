@@ -4,56 +4,81 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Gambar Sumur</title>
-  <link rel="stylesheet" href="shared/styles.css?v=20261102a" />
-  <link rel="stylesheet" href="azimuth/azimuth.css?v=20261102a" />
-  <link rel="stylesheet" href="casing/casing.css?v=20261102a" />
-  <link rel="stylesheet" href="drilling/drilling.css?v=20261102a" />
-  <link rel="stylesheet" href="boxplot/boxplot.css?v=20261102a" />
+  <link rel="stylesheet" href="shared/styles.css?v=20261102g" />
+  <link rel="stylesheet" href="azimuth/azimuth.css?v=20261102d" />
+  <link rel="stylesheet" href="casing/casing.css?v=20261102d" />
+  <link rel="stylesheet" href="drilling/drilling.css?v=20261102d" />
+  <link rel="stylesheet" href="boxplot/boxplot.css?v=20261102d" />
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <h1 id="app-title">Chart Azimuth &amp; Inklinasi</h1>
-      <nav class="tabs" role="tablist" aria-label="Fitur">
-        <button type="button" class="tab" id="tab-azimuth" role="tab" aria-selected="true" aria-controls="panel-azimuth">Azimuth Polar Chart</button>
-        <button type="button" class="tab" id="tab-casing" role="tab" aria-selected="false" aria-controls="panel-casing">Casing Setting Depth</button>
-        <button type="button" class="tab" id="tab-drilling" role="tab" aria-selected="false" aria-controls="panel-drilling">Drilling Summary</button>
-        <button type="button" class="tab" id="tab-boxplot" role="tab" aria-selected="false" aria-controls="panel-boxplot">Box &amp; Whisker</button>
-        <button type="button" class="tab" id="tab-ai" role="tab" aria-selected="false" aria-controls="panel-ai">AI Suggestion</button>
-        <button type="button" class="tab" id="tab-automl" role="tab" aria-selected="false" aria-controls="panel-automl">AutoML</button>
+      <div class="brand-mark">
+        <p class="brand-name">Gambar Sumur</p>
+        <h1 id="app-title">Azimuth &amp; Inklinasi</h1>
+      </div>
+      <nav class="tabs" role="tablist" aria-label="Fitur chart">
+        <button type="button" class="tab" id="tab-azimuth" role="tab" aria-selected="true" aria-controls="panel-azimuth" title="Chart polar azimuth dan inklinasi">
+          <span class="tab-label">Azimuth</span>
+          <span class="tab-sub">Polar chart</span>
+        </button>
+        <button type="button" class="tab" id="tab-casing" role="tab" aria-selected="false" aria-controls="panel-casing" title="Kedalaman setting casing">
+          <span class="tab-label">Casing</span>
+          <span class="tab-sub">Setting depth</span>
+        </button>
+        <button type="button" class="tab" id="tab-drilling" role="tab" aria-selected="false" aria-controls="panel-drilling" title="Ringkasan waktu vs kedalaman">
+          <span class="tab-label">Drilling</span>
+          <span class="tab-sub">Time vs depth</span>
+        </button>
+        <button type="button" class="tab" id="tab-boxplot" role="tab" aria-selected="false" aria-controls="panel-boxplot" title="Sebaran nilai per kolom">
+          <span class="tab-label">Boxplot</span>
+          <span class="tab-sub">Sebaran data</span>
+        </button>
+        <button type="button" class="tab" id="tab-ai" role="tab" aria-selected="false" aria-controls="panel-ai" title="Saran AI dari data sumur">
+          <span class="tab-label">AI</span>
+          <span class="tab-sub">Suggestion</span>
+        </button>
+        <button type="button" class="tab" id="tab-automl" role="tab" aria-selected="false" aria-controls="panel-automl" title="Latih model dari CSV">
+          <span class="tab-label">AutoML</span>
+          <span class="tab-sub">Train &amp; predict</span>
+        </button>
       </nav>
     </div>
     <div class="top-actions-wrap">
-      <div class="top-actions">
-        <button type="button" class="btn ghost" id="btn-open-project">Buka</button>
-        <button type="button" class="btn" id="btn-save-project">Simpan</button>
-        <button type="button" class="btn ghost" id="btn-storage" title="Save / Load">Save / Load</button>
-        <button type="button" class="btn ghost" id="btn-settings" title="Settings">⚙ Settings</button>
-        <span class="micro" id="project-status-line" style="margin-left:8px"></span>
+      <div class="action-group" data-label="Proyek">
+        <button type="button" class="btn ghost" id="btn-open-project" title="Buka file proyek JSON">Buka</button>
+        <button type="button" class="btn" id="btn-save-project" title="Unduh proyek sebagai JSON">Simpan</button>
+        <button type="button" class="btn ghost" id="btn-storage" title="Simpan atau muat lewat folder lokal / API">Folder</button>
+        <button type="button" class="btn ghost" id="btn-settings" title="Pengaturan API dan folder data">Pengaturan</button>
+        <span class="status-chip" id="project-status-line" title="Status proyek"></span>
         <input id="project-file" type="file" accept=".json,application/json" hidden />
       </div>
-      <div class="top-actions" id="actions-azimuth">
-      <button type="button" class="btn ghost" id="btn-png">PNG</button>
-      <button type="button" class="btn ghost" id="btn-jpg">JPG</button>
-      <button type="button" class="btn" id="btn-pdf">Unduh PDF</button>
-    </div>
-    <div class="top-actions" id="actions-casing" hidden>
-      <button type="button" class="btn ghost" id="csg-png">PNG</button>
-      <button type="button" class="btn ghost" id="csg-jpg">JPG</button>
-      <button type="button" class="btn" id="csg-pdf">Unduh PDF</button>
-    </div>
-    <div class="top-actions" id="actions-drilling" hidden>
-      <button type="button" class="btn ghost" id="ds-png">PNG</button>
-      <button type="button" class="btn ghost" id="ds-jpg">JPG</button>
-      <button type="button" class="btn" id="ds-pdf">Unduh PDF</button>
-    </div>
-    <div class="top-actions" id="actions-ai" hidden></div>
-    <div class="top-actions" id="actions-automl" hidden></div>
-      <div class="top-actions" id="actions-boxplot" hidden>
-      <button type="button" class="btn ghost" id="bx-png">PNG</button>
-      <button type="button" class="btn ghost" id="bx-jpg">JPG</button>
-      <button type="button" class="btn" id="bx-pdf">Unduh PDF</button>
-    </div>
+      <div class="action-group" data-label="Unduh gambar" id="actions-azimuth">
+        <button type="button" class="btn ghost" id="btn-png">PNG</button>
+        <button type="button" class="btn ghost" id="btn-jpg">JPG</button>
+        <button type="button" class="btn" id="btn-pdf">PDF</button>
+      </div>
+      <div class="action-group" data-label="Unduh gambar" id="actions-casing" hidden>
+        <button type="button" class="btn ghost" id="csg-png">PNG</button>
+        <button type="button" class="btn ghost" id="csg-jpg">JPG</button>
+        <button type="button" class="btn" id="csg-pdf">PDF</button>
+      </div>
+      <div class="action-group" data-label="Unduh gambar" id="actions-drilling" hidden>
+        <button type="button" class="btn ghost" id="ds-png">PNG</button>
+        <button type="button" class="btn ghost" id="ds-jpg">JPG</button>
+        <button type="button" class="btn" id="ds-pdf">PDF</button>
+      </div>
+      <div class="action-group" data-label="Unduh gambar" id="actions-boxplot" hidden>
+        <button type="button" class="btn ghost" id="bx-png">PNG</button>
+        <button type="button" class="btn ghost" id="bx-jpg">JPG</button>
+        <button type="button" class="btn" id="bx-pdf">PDF</button>
+      </div>
+      <div class="action-group" data-label="Alat" id="actions-ai" hidden>
+        <span class="micro" style="margin:0">Hasil AI tampil di panel kanan</span>
+      </div>
+      <div class="action-group" data-label="Alat" id="actions-automl" hidden>
+        <span class="micro" style="margin:0">Ikuti langkah 1–8 di panel kiri</span>
+      </div>
     </div>
   </header>
 
@@ -267,7 +292,11 @@
 
       <section>
         <h2>Sumur</h2>
-        <p class="micro">Isi MD shoe dan TVD shoe. Casing selalu digambar dari 0 TVD. Kosongkan Top of liner bila belum ada data: liner digambar lebih tinggi supaya sambungannya dengan casing terdalam terlihat jelas. Isi Top of liner untuk memakai kedalaman TVD yang pasti. Warna sumur mengelompokkan jenis sumur di header gambar; sumur berurutan dengan warna sama digabung. Garis biasa untuk casing, putus-putus untuk open hole atau liner perforated.</p>
+        <p class="panel-lead">Isi <b>MD shoe</b> dan <b>TVD shoe</b>. Casing digambar dari 0 TVD. Warna yang sama pada sumur berurutan digabung di header.</p>
+        <details class="fold">
+          <summary>Cara mengisi casing &amp; liner</summary>
+          <p class="micro">Kosongkan Top of liner bila belum ada data: liner digambar lebih tinggi supaya sambungan ke casing terdalam terlihat. Isi Top of liner untuk kedalaman TVD pasti. Garis biasa = casing; putus-putus = open hole / liner perforated.</p>
+        </details>
         <div class="row-actions">
           <button type="button" class="btn ghost" id="csg-sample">Muat contoh</button>
           <button type="button" class="btn ghost" id="csg-clear">Kosongkan</button>
@@ -492,13 +521,13 @@
   <div class="layout wide bx-layout" id="panel-boxplot" role="tabpanel" hidden>
     <aside class="panel">
       <section class="feature-box">
-        <h2>Plots <span class="count" id="bx-plot-count"></span></h2>
-        <p class="micro">Add plots without deleting existing ones. Click a plot to edit it.</p>
+        <h2>Daftar plot <span class="count" id="bx-plot-count"></span></h2>
+        <p class="micro">Tambah plot baru tanpa menghapus yang lama. Klik salah satu untuk mengedit.</p>
         <div id="bx-plot-list" class="bx-plot-list"></div>
-        <label>Active plot name
+        <label>Nama plot aktif
           <input id="bx-plot-name" type="text" spellcheck="false" placeholder="Plot 1" />
         </label>
-        <button type="button" class="btn" id="bx-add-plot">Add new plot</button>
+        <button type="button" class="btn" id="bx-add-plot">Tambah plot</button>
       </section>
       <section>
         <h2>Chart</h2>
@@ -590,9 +619,10 @@
 
   <div class="layout wide" id="panel-ai" role="tabpanel" hidden>
     <aside class="panel">
+      <p class="panel-lead">Isi API key di <b>Pengaturan</b>, pilih sumur, lalu generate. Hasil disimpan di browser supaya tidak memanggil API berulang.</p>
       <section class="feature-box">
-        <h2>1. Ringkasan sumur (AI)</h2>
-        <p class="micro">Pilih sumur, lalu klik Generate. Hasil 1 paragraf disimpan agar API tidak dipanggil ulang.</p>
+        <h2>1. Ringkasan sumur</h2>
+        <p class="micro">Pilih satu atau beberapa sumur, lalu klik Generate.</p>
         <label>Mode ringkasan
           <select id="ai-summary-mode">
             <option value="one">Satu sumur</option>
@@ -605,24 +635,34 @@
         <p class="status" id="ai-summary-status" role="status"></p>
       </section>
       <section>
-        <h2>Casing depth suggestion</h2>
-        <p class="micro">AI menganalisis semua sumur di proyek sebagai offset wells untuk mengusulkan casing setting depth sumur baru (proposed).</p>
+        <h2>2. Usulan casing depth</h2>
+        <p class="micro">Semua sumur di proyek dipakai sebagai offset untuk mengusulkan casing sumur baru.</p>
         <label>Nama sumur proposed
           <input id="ai-proposed-name" type="text" placeholder="OOA-5" spellcheck="false" />
         </label>
         <label>Catatan desain (opsional)
           <textarea id="ai-proposed-notes" rows="3" placeholder="Target formasi, kendala, dll."></textarea>
         </label>
-        <button type="button" class="btn" id="ai-generate-casing">Generate casing suggestion</button>
+        <button type="button" class="btn" id="ai-generate-casing">Generate usulan casing</button>
         <p class="status" id="ai-casing-status" role="status"></p>
       </section>
     </aside>
     <main>
       <section class="ai-results">
         <h2>Hasil ringkasan</h2>
-        <div id="ai-summary-results"></div>
-        <h2>Hasil casing suggestion</h2>
-        <div id="ai-casing-results"></div>
+        <div id="ai-summary-results">
+          <div class="empty-state">
+            <strong>Belum ada ringkasan</strong>
+            <span>Generate dari panel kiri untuk melihat hasil di sini.</span>
+          </div>
+        </div>
+        <h2>Hasil usulan casing</h2>
+        <div id="ai-casing-results">
+          <div class="empty-state">
+            <strong>Belum ada usulan casing</strong>
+            <span>Isi nama sumur proposed, lalu generate.</span>
+          </div>
+        </div>
       </section>
     </main>
   </div>
@@ -632,48 +672,58 @@
     <div class="settings-backdrop" data-settings-close="1"></div>
     <div class="settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header class="settings-header">
-        <h2 id="settings-title">Settings API</h2>
+        <div>
+          <h2 id="settings-title">Pengaturan</h2>
+          <p class="micro">API AI, folder data lokal, dan koneksi server</p>
+        </div>
         <button type="button" class="btn ghost" id="settings-close" data-settings-close="1">Tutup</button>
       </header>
       <div class="settings-body">
-        <label>Provider
-          <select id="set-provider">
-            <option value="openai">OpenAI</option>
-            <option value="openrouter">OpenRouter</option>
-            <option value="deepseek">DeepSeek</option>
-            <option value="grok">Grok (xAI)</option>
-            <option value="custom">Custom endpoint</option>
-          </select>
-        </label>
-        <label>Model
-          <input id="set-model" type="text" placeholder="gpt-4o-mini / deepseek-chat / grok-2" spellcheck="false" />
-        </label>
-        <label>API Key
-          <input id="set-apikey" type="password" placeholder="sk-..." spellcheck="false" autocomplete="off" />
-        </label>
-        <label>Endpoint (opsional / custom)
-          <input id="set-endpoint" type="text" placeholder="https://api.openai.com/v1/chat/completions" spellcheck="false" />
-        </label>
-        <label>API base URL
-          <input id="set-api-base" type="text" placeholder="Leave empty for portable (same as this app)" spellcheck="false" />
-        </label>
-        <p class="micro">Portable EXE: leave empty. The app talks to itself on this PC.</p>
-        <label>Local data folder (full path)
-          <input id="set-data-dir" type="text" placeholder="e.g. D:\MigasData or leave empty for ./migas_data" spellcheck="false" />
-        </label>
-        <button type="button" class="btn ghost" id="settings-apply-data-dir">Apply data folder</button>
-        <p class="micro" id="settings-data-dir-status"></p>
-        <p class="micro">Leave empty if the site is served from the VPS and nginx proxies <code>/api</code>. Example: <code>http://YOUR_IP:5055</code> only if you call the API port directly.</p>
-        <label>API token (optional)
-          <input id="set-api-token" type="password" placeholder="shared secret" spellcheck="false" autocomplete="off" />
-        </label>
-        <label>VPS Settings URL (opsional)
-          <input id="set-vps-url" type="text" placeholder="https://your-vps.example.com/migas-settings.json" spellcheck="false" />
-        </label>
-        <p class="micro">Settings disimpan di browser. Jika VPS URL diisi, ikut di-sync (GET saat muat, PUT/POST saat simpan).</p>
+        <section class="field-group">
+          <h3>API untuk AI Suggestion</h3>
+          <p class="micro" id="set-ai-hint">Mode Demo: uji Generate tanpa beli API. Jawaban dilabeli [DEMO].</p>
+          <label>Provider
+            <select id="set-provider">
+              <option value="demo">Demo (gratis, tanpa API key)</option>
+              <option value="openai">OpenAI</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="grok">Grok (xAI)</option>
+              <option value="custom">Custom endpoint</option>
+            </select>
+          </label>
+          <label>Model
+            <input id="set-model" type="text" placeholder="demo-local / gpt-4o-mini / deepseek-chat" spellcheck="false" />
+          </label>
+          <label>API Key
+            <input id="set-apikey" type="password" placeholder="sk-... (kosongkan jika Demo)" spellcheck="false" autocomplete="off" />
+          </label>
+          <label>Endpoint (opsional / custom)
+            <input id="set-endpoint" type="text" placeholder="https://api.openai.com/v1/chat/completions" spellcheck="false" />
+          </label>
+        </section>
+        <section class="field-group">
+          <h3>Server &amp; folder data</h3>
+          <label>API base URL
+            <input id="set-api-base" type="text" placeholder="Kosongkan untuk mode portable (aplikasi ini)" spellcheck="false" />
+          </label>
+          <p class="micro">Portable: kosongkan. VPS: isi jika memanggil port API langsung, contoh <code>http://IP:5055</code>.</p>
+          <label>Folder data lokal (path lengkap)
+            <input id="set-data-dir" type="text" placeholder="Contoh D:\MigasData atau kosong = ./migas_data" spellcheck="false" />
+          </label>
+          <button type="button" class="btn ghost" id="settings-apply-data-dir">Terapkan folder data</button>
+          <p class="micro" id="settings-data-dir-status"></p>
+          <label>API token (opsional)
+            <input id="set-api-token" type="password" placeholder="shared secret" spellcheck="false" autocomplete="off" />
+          </label>
+          <label>URL settings VPS (opsional)
+            <input id="set-vps-url" type="text" placeholder="https://your-vps.example.com/migas-settings.json" spellcheck="false" />
+          </label>
+          <p class="micro">Disimpan di browser. Jika URL VPS diisi, settings ikut sync.</p>
+        </section>
         <div class="row-actions">
-          <button type="button" class="btn" id="settings-save">Save settings</button>
-          <button type="button" class="btn ghost" id="settings-test-api">Test API connection</button>
+          <button type="button" class="btn" id="settings-save">Simpan pengaturan</button>
+          <button type="button" class="btn ghost" id="settings-test-api">Uji AI Suggestion</button>
           <button type="button" class="btn ghost" id="settings-load-vps">Muat dari VPS</button>
         </div>
         <p class="status" id="settings-status" role="status"></p>
@@ -686,27 +736,37 @@
     <div class="settings-backdrop" id="storage-backdrop"></div>
     <div class="settings-card" style="width:min(640px,100%)">
       <header class="settings-header">
-        <h2>Save / Load project</h2>
-        <button type="button" class="btn ghost" id="storage-close">Close</button>
+        <div>
+          <h2>Simpan / Muat proyek</h2>
+          <p class="micro">Folder lokal aplikasi atau unduh file JSON ke perangkat</p>
+        </div>
+        <button type="button" class="btn ghost" id="storage-close">Tutup</button>
       </header>
       <div class="settings-body">
-        <h3>Load from this PC (folder)</h3>
-        <p class="micro">JSON files in the local data folder (next to the app, or the folder you set in Settings).</p>
-        <div class="row-actions">
-          <button type="button" class="btn ghost" id="storage-refresh">Refresh list</button>
-        </div>
-        <div id="storage-file-list" class="storage-file-list"></div>
-        <h3>Load from my device</h3>
-        <button type="button" class="btn ghost" id="storage-load-device">Choose JSON file</button>
-        <input id="storage-device-file" type="file" accept=".json,application/json" hidden />
-        <hr />
-        <h3>Save to this PC (folder)</h3>
-        <label>File name
-          <input id="storage-save-name" type="text" placeholder="my-project" spellcheck="false" />
-        </label>
-        <button type="button" class="btn" id="storage-save-vps">Save to this PC (folder)</button>
-        <h3>Save to my device</h3>
-        <button type="button" class="btn ghost" id="storage-save-device">Download JSON</button>
+        <section class="field-group">
+          <h3>Muat dari folder PC</h3>
+          <p class="micro">File JSON di folder data (di samping aplikasi, atau folder di Pengaturan).</p>
+          <div class="row-actions">
+            <button type="button" class="btn ghost" id="storage-refresh">Segarkan daftar</button>
+          </div>
+          <div id="storage-file-list" class="storage-file-list"></div>
+        </section>
+        <section class="field-group">
+          <h3>Muat dari file</h3>
+          <button type="button" class="btn ghost" id="storage-load-device">Pilih file JSON</button>
+          <input id="storage-device-file" type="file" accept=".json,application/json" hidden />
+        </section>
+        <section class="field-group">
+          <h3>Simpan ke folder PC</h3>
+          <label>Nama file
+            <input id="storage-save-name" type="text" placeholder="my-project" spellcheck="false" />
+          </label>
+          <button type="button" class="btn" id="storage-save-vps">Simpan ke folder</button>
+        </section>
+        <section class="field-group">
+          <h3>Unduh ke perangkat</h3>
+          <button type="button" class="btn ghost" id="storage-save-device">Unduh JSON</button>
+        </section>
       </div>
     </div>
   </div>
@@ -714,30 +774,30 @@
   <div class="layout wide" id="panel-automl" role="tabpanel" hidden>
     <aside class="panel">
       <section class="feature-box">
-        <h2>AutoML wizard</h2>
-        <p class="micro">Guided steps from CSV to prediction using AutoML-Alex on your VPS.</p>
-        <div class="automl-progress" id="automl-progress">Step 1 of 8</div>
+        <h2>Panduan AutoML</h2>
+        <p class="micro">Ikuti 8 langkah: dari CSV sampai prediksi. Jalankan lewat <b>Start_Migas.bat</b> atau VPS.</p>
+        <div class="automl-progress" id="automl-progress">Langkah 1 dari 8</div>
         <ol class="automl-steps" id="automl-step-list">
-          <li data-step="1" class="on">1. Import CSV</li>
-          <li data-step="2">2. Choose X / Y</li>
+          <li data-step="1" class="on">1. Impor CSV</li>
+          <li data-step="2">2. Pilih X / Y</li>
           <li data-step="3">3. Feature engineering</li>
-          <li data-step="4">4. Choose models</li>
-          <li data-step="5">5. Train</li>
-          <li data-step="6">6. Results</li>
-          <li data-step="7">7. Save model</li>
-          <li data-step="8">8. Predict</li>
+          <li data-step="4">4. Pilih model</li>
+          <li data-step="5">5. Latih</li>
+          <li data-step="6">6. Hasil</li>
+          <li data-step="7">7. Muat model</li>
+          <li data-step="8">8. Prediksi</li>
         </ol>
       </section>
       <section id="automl-side-summary" class="feature-box">
-        <h2>Summary</h2>
-        <p class="micro" id="automl-summary-text">No CSV loaded yet.</p>
+        <h2>Ringkas</h2>
+        <p class="micro" id="automl-summary-text">Belum ada CSV yang dimuat.</p>
       </section>
     </aside>
     <main>
       <div id="automl-step-panel" class="automl-main"></div>
       <div class="row-actions" style="padding:12px 16px">
-        <button type="button" class="btn ghost" id="automl-back">Back</button>
-        <button type="button" class="btn" id="automl-next">Next</button>
+        <button type="button" class="btn ghost" id="automl-back">Kembali</button>
+        <button type="button" class="btn" id="automl-next">Lanjut</button>
       </div>
       <p class="status" id="automl-status" role="status"></p>
     </main>
@@ -745,12 +805,12 @@
 
 <script src="shared/vendor/xlsx.full.min.js"></script>
   <script src="shared/vendor/jspdf.umd.min.js"></script>
-  <script src="azimuth/azimuth.js?v=20261102a"></script>
-  <script src="casing/casing.js?v=20261102a"></script>
-  <script src="drilling/drilling.js?v=20261102a"></script>
-  <script src="boxplot/boxplot.js?v=20261102a"></script>
-  <script src="shared/storage.js?v=20261102a"></script>
-  <script src="automl/automl.js?v=20261102a"></script>
-  <script src="ai/ai.js?v=20261102a"></script>
+  <script src="azimuth/azimuth.js?v=20261102d"></script>
+  <script src="casing/casing.js?v=20261102d"></script>
+  <script src="drilling/drilling.js?v=20261102d"></script>
+  <script src="boxplot/boxplot.js?v=20261102f"></script>
+  <script src="shared/storage.js?v=20261102d"></script>
+  <script src="automl/automl.js?v=20261102l"></script>
+  <script src="ai/ai.js?v=20261102e"></script>
 </body>
 </html>

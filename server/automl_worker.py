@@ -229,12 +229,24 @@ def run_multiclass(ctx):
     job_id, model_dir, job_dir = ctx["job_id"], ctx["model_dir"], ctx["job_dir"]
     n_classes = len(class_names)
 
+    from sklearn.impute import SimpleImputer
+    from sklearn.pipeline import Pipeline as SkPipeline
+
     cat_cols = [c for c in X_train.columns if not pd.api.types.is_numeric_dtype(X_train[c])]
     num_cols = [c for c in X_train.columns if c not in cat_cols]
-    pre = ColumnTransformer(
-        [("cat", OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1), cat_cols)],
-        remainder="passthrough",
-    )
+    transformers = []
+    if cat_cols:
+        transformers.append((
+            "cat",
+            SkPipeline([
+                ("imp", SimpleImputer(strategy="most_frequent")),
+                ("enc", OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)),
+            ]),
+            cat_cols,
+        ))
+    if num_cols:
+        transformers.append(("num", SimpleImputer(strategy="median"), num_cols))
+    pre = ColumnTransformer(transformers, remainder="drop")
     # classes with <3 samples cannot be cross-validated -> use fewer folds
     min_count = int(pd.Series(y_train).value_counts().min())
     folds = max(2, min(3, min_count))
@@ -246,8 +258,14 @@ def run_multiclass(ctx):
     def make(params):
         return Pipeline([
             ("pre", pre),
-            ("clf", LGBMClassifier(objective="multiclass", num_class=n_classes, random_state=rs,
-                                   verbosity=-1, class_weight="balanced", **params)),
+            ("clf", LGBMClassifier(
+                objective="multiclass",
+                num_class=n_classes,
+                random_state=rs,
+                verbosity=-1,
+                class_weight="balanced",
+                **params,
+            )),
         ])
 
     def objective(trial):
@@ -289,6 +307,8 @@ def run_multiclass(ctx):
         "balanced_accuracy_test": float(metrics.balanced_accuracy_score(y_test, lab_te)),
         "f1_macro_test": float(metrics.f1_score(y_test, lab_te, average="macro", zero_division=0)),
         "f1_weighted_test": float(metrics.f1_score(y_test, lab_te, average="weighted", zero_division=0)),
+        "primary_metric": "balanced_accuracy_test",
+        "primary_value": float(metrics.balanced_accuracy_score(y_test, lab_te)),
     }
     labels = list(range(n_classes))
     scores["classification_report"] = metrics.classification_report(
@@ -296,6 +316,7 @@ def run_multiclass(ctx):
     scores["confusion_matrix"] = metrics.confusion_matrix(y_test, lab_te, labels=labels).tolist()
     log("Scores: " + str({k: round(v, 4) for k, v in scores.items() if not isinstance(v, (dict, list))}))
 
+    feature_schema = ctx.get("feature_schema") or {}
     model_name = f"automl_{job_id}.joblib"
     bundle = {
         "kind": "multiclass_lgbm",
@@ -305,6 +326,7 @@ def run_multiclass(ctx):
         "metric": "balanced_accuracy", "best_model_name": "LightGBM (multi-class)",
         "best_model_param": study.best_params, "scores": scores, "class_names": class_names,
         "library_version": ctx["lib_version"],
+        "feature_schema": feature_schema,
     }
     joblib.dump(bundle, model_dir / model_name)
     simple = {k: v for k, v in scores.items() if not isinstance(v, (dict, list))}
@@ -312,7 +334,10 @@ def run_multiclass(ctx):
         "created": pd.Timestamp.now("UTC").isoformat(), "task": "classification",
         "target": ctx["target"], "features": ctx["features"], "model_file": model_name,
         "best_model_name": "LightGBM (multi-class)", "scores": simple,
-        "library_version": ctx["lib_version"]}, indent=2), encoding="utf-8")
+        "library_version": ctx["lib_version"],
+        "feature_schema": feature_schema,
+        "class_names": class_names,
+    }, indent=2), encoding="utf-8")
     log(f"Saved model {model_dir / model_name}")
     progress(95)
     hist = None
@@ -320,6 +345,8 @@ def run_multiclass(ctx):
         hist = json.loads(study.trials_dataframe().to_json(orient="records", date_format="iso"))
     except Exception:
         pass
+    from automl_utils import training_curve_from_history
+    training_curve = training_curve_from_history(hist, task="classification")
     fi = None
     try:
         clf = best.named_steps.get("clf") if hasattr(best, "named_steps") else None
@@ -341,6 +368,8 @@ def run_multiclass(ctx):
         "class_names": class_names, "train_shape": list(X_train.shape), "test_shape": list(X_test.shape),
         "library_version": ctx["lib_version"],
         "plots": plots,
+        "feature_schema": feature_schema,
+        "training_curve": training_curve,
     }
     (job_dir / f"{job_id}_result.json").write_text(json.dumps(result, default=str), encoding="utf-8")
     progress(100)
@@ -385,16 +414,24 @@ def main(cfg_path: str):
         def clean_name(c):
             return str(c).replace("\ufeff", "").strip()
 
-        try:  # same reader as the upload preview (auto-detects , ; tab) and strips the BOM
-            df = pd.read_csv(cfg["csv_path"], sep=None, engine="python", encoding="utf-8-sig")
-        except UnicodeDecodeError:
-            df = pd.read_csv(cfg["csv_path"], sep=None, engine="python", encoding="latin-1")
-        df.columns = [clean_name(c) for c in df.columns]
+        def read_csv_file(path):
+            try:
+                frame = pd.read_csv(path, sep=None, engine="python", encoding="utf-8-sig")
+            except UnicodeDecodeError:
+                frame = pd.read_csv(path, sep=None, engine="python", encoding="latin-1")
+            frame.columns = [clean_name(c) for c in frame.columns]
+            return frame
+
+        train_csv = cfg.get("train_csv_path") or cfg["csv_path"]
+        test_csv = cfg.get("test_csv_path") or None
+        external_split = bool(test_csv)
+
+        df = read_csv_file(train_csv)
         target = clean_name(cfg["target"])
         features = [clean_name(f) for f in cfg["features"]]
         for col in features + [target]:
             if col not in df.columns:
-                raise ValueError(f"Column not found: {col}")
+                raise ValueError(f"Column not found in train CSV: {col}")
         if target in features:
             features.remove(target)
         if not features:
@@ -402,19 +439,40 @@ def main(cfg_path: str):
 
         before = len(df)
         df = df.dropna(subset=[target]).copy()
-        log(f"CSV rows: {before} (dropped {before - len(df)} with missing target) | columns: {df.shape[1]}")
+        log(
+            f"Train CSV rows: {before} (dropped {before - len(df)} with missing target) | columns: {df.shape[1]}"
+            + (f" | file: {train_csv}" if external_split else "")
+        )
 
         y = df[target]
         X = df[features].copy()
+        X_test_ext = None
+        y_test_ext = None
+
+        if external_split:
+            df_te = read_csv_file(test_csv)
+            missing = [c for c in features + [target] if c not in df_te.columns]
+            if missing:
+                raise ValueError("Test CSV missing columns: " + ", ".join(missing))
+            before_te = len(df_te)
+            df_te = df_te.dropna(subset=[target]).copy()
+            X_test_ext = df_te[features].copy()
+            y_test_ext = df_te[target]
+            log(
+                f"Test CSV rows: {before_te} (dropped {before_te - len(df_te)} with missing target) "
+                f"| external train/test split (no random hold-out)"
+            )
+
+        # Problem-type inference (AutoGluon-style) — see automl_utils.infer_problem_type
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from automl_utils import infer_problem_type
 
         force_cls = bool(cfg.get("force_classification"))
-        if force_cls:
-            task = "classification"
-        elif cfg.get("task") in ("classification", "regression"):
-            task = cfg["task"]
-        else:
-            task = "regression" if pd.api.types.is_numeric_dtype(y) else "classification"
-        log(f"Task: {task}")
+        explicit = cfg.get("task") if cfg.get("task") in ("classification", "regression") else None
+        task, task_reason = infer_problem_type(
+            y, explicit_task=explicit, force_classification=force_cls
+        )
+        log(f"Task: {task} — {task_reason}")
 
         random_state = int(cfg.get("random_state") or 42)
 
@@ -441,6 +499,31 @@ def main(cfg_path: str):
                 y = y.loc[idx]
             log(f"Sample shape: {X.shape}")
 
+        # Drop ID-like / near-unique text columns (classic leakage, e.g. animal_name on zoo data)
+        n_rows = len(X)
+        id_drop = []
+        for c in list(X.columns):
+            nunq = int(X[c].nunique(dropna=True))
+            low = str(c).lower()
+            looks_id_name = any(
+                tok in low
+                for tok in ("_id", "id_", "uuid", "guid", "name", "nama", "label_id", "wellbore")
+            )
+            almost_unique = nunq >= max(40, int(0.85 * n_rows))
+            textish = not pd.api.types.is_numeric_dtype(X[c])
+            if textish and almost_unique:
+                id_drop.append(c)
+            elif looks_id_name and nunq >= max(20, int(0.5 * n_rows)):
+                id_drop.append(c)
+        if id_drop:
+            X = X.drop(columns=id_drop)
+            if X_test_ext is not None:
+                X_test_ext = X_test_ext.drop(columns=[c for c in id_drop if c in X_test_ext.columns])
+            features = [c for c in X.columns]
+            log(f"Dropped ID/high-cardinality columns (leakage risk): {id_drop}")
+        if X.shape[1] == 0:
+            raise ValueError("No usable input columns left after dropping ID-like columns.")
+
         max_cols = int(cfg.get("max_cols") or 60)
         if X.shape[1] > max_cols:
             num_cols = [c for c in X.columns if pd.api.types.is_numeric_dtype(X[c])]
@@ -449,8 +532,24 @@ def main(cfg_path: str):
             keep_num = list(var.index[: max(1, max_cols - len(other))]) if num_cols else []
             keep = (other + keep_num)[:max_cols]
             X = X[keep]
+            if X_test_ext is not None:
+                X_test_ext = X_test_ext[[c for c in keep if c in X_test_ext.columns]]
             features = list(X.columns)
             log(f"Limited to {len(features)} input columns")
+
+        if X_test_ext is not None:
+            # keep identical column order
+            X_test_ext = X_test_ext.reindex(columns=list(X.columns))
+
+        # Feature schema (original names) — drives predict/optimize UI (Gender→male/female, …)
+        from automl_utils import build_feature_schema, training_curve_from_history
+
+        feature_schema = build_feature_schema(X, list(X.columns))
+        cat_orig = [n for n, meta in feature_schema.items() if meta.get("type") == "categorical"]
+        if cat_orig:
+            log("Input schema categorical: " + ", ".join(
+                f"{n}{feature_schema[n].get('categories')}" for n in cat_orig[:12]
+            ) + ("…" if len(cat_orig) > 12 else ""))
 
         # LightGBM/XGBoost reject names with [ ] < , : " { } etc. (e.g. "Air temperature [K]").
         # Train on safe internal names; remember the mapping so predict accepts the original names.
@@ -467,17 +566,28 @@ def main(cfg_path: str):
             safe_names[orig] = sn
         if any(o != n for o, n in safe_names.items()):
             log("Renamed columns for the model: " + ", ".join(f"{o}->{n}" for o, n in safe_names.items() if o != n))
+        # Remap schema keys to safe names for internal use; keep original-name schema for UI
+        inv_safe = {v: k for k, v in safe_names.items()}
         X = X.rename(columns=safe_names)
+        if X_test_ext is not None:
+            X_test_ext = X_test_ext.rename(columns=safe_names)
+
+        def _apply_feature_dtypes(frame):
+            cats = []
+            for col in list(frame.columns):
+                orig = inv_safe.get(col, col)
+                kind = (feature_schema.get(orig) or {}).get("type")
+                if kind == "categorical" or not pd.api.types.is_numeric_dtype(frame[col]):
+                    frame[col] = frame[col].astype(object)
+                    cats.append(col)
+                else:
+                    frame[col] = pd.to_numeric(frame[col], errors="coerce").astype("float64")
+            return cats
 
         # AutoML_Alex DataPrepare only treats dtypes object|category as categorical
-        # (data_prepare.py). pandas StringDtype is missed, then data.median() crashes.
-        cat_cols = []
-        for col in list(X.columns):
-            if pd.api.types.is_numeric_dtype(X[col]):
-                X[col] = pd.to_numeric(X[col], errors="coerce").astype("float64")
-            else:
-                X[col] = X[col].astype(object)
-                cat_cols.append(col)
+        cat_cols = _apply_feature_dtypes(X)
+        if X_test_ext is not None:
+            _apply_feature_dtypes(X_test_ext)
         if cat_cols:
             log(f"Categorical (object) columns for DataPrepare: {cat_cols}")
 
@@ -487,7 +597,7 @@ def main(cfg_path: str):
         if task == "classification":
             y = y.astype(str)
             label_encoder = LabelEncoder()
-            y = pd.Series(label_encoder.fit_transform(y), name=target)
+            label_encoder.fit(y)
             class_names = [str(c) for c in label_encoder.classes_]
             log(f"Classes: {class_names}")
             if len(class_names) < 2:
@@ -495,29 +605,59 @@ def main(cfg_path: str):
             if len(class_names) > 2:
                 log(f"{len(class_names)} classes -> multi-class mode (LightGBM + Optuna tuning). "
                     "AutoML-Alex itself only does binary targets.")
+            y = pd.Series(label_encoder.transform(y), name=target, index=y.index)
+            if y_test_ext is not None:
+                y_te = y_test_ext.astype(str)
+                known = set(class_names)
+                mask = y_te.isin(known)
+                dropped = int((~mask).sum())
+                if dropped:
+                    log(f"Test: dropping {dropped} rows with target class not seen in train")
+                    X_test_ext = X_test_ext.loc[mask.values].copy()
+                    y_te = y_te.loc[mask]
+                if len(y_te) == 0:
+                    raise ValueError("Test CSV has no rows with target classes present in train.")
+                y_test_ext = pd.Series(label_encoder.transform(y_te), name=target)
         else:
             y = pd.to_numeric(y, errors="coerce")
             ok = y.notna().values
             if not ok.all():
                 log(f"Dropping {int((~ok).sum())} rows where target is not numeric")
                 X, y = X.loc[ok], y.loc[ok]
+            if y_test_ext is not None:
+                y_te = pd.to_numeric(y_test_ext, errors="coerce")
+                ok_te = y_te.notna().values
+                if not ok_te.all():
+                    log(f"Test: dropping {int((~ok_te).sum())} rows where target is not numeric")
+                    X_test_ext = X_test_ext.loc[ok_te].copy()
+                    y_te = y_te.loc[ok_te]
+                if len(y_te) == 0:
+                    raise ValueError("Test CSV has no numeric target rows.")
+                y_test_ext = y_te
         progress(10)
 
-        test_size = float(cfg.get("test_size") or 0.2)
-        strat = y if task == "classification" else None
-        try:
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=test_size, random_state=random_state, stratify=strat
-            )
-        except Exception:
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=test_size, random_state=random_state
-            )
-        X_train = X_train.reset_index(drop=True)
-        X_test = X_test.reset_index(drop=True)
-        y_train = pd.Series(y_train).reset_index(drop=True)
-        y_test = pd.Series(y_test).reset_index(drop=True)
-        log(f"Train {X_train.shape} | Test {X_test.shape} | {ram_text()}")
+        if external_split and X_test_ext is not None and y_test_ext is not None:
+            X_train = X.reset_index(drop=True)
+            y_train = pd.Series(y).reset_index(drop=True)
+            X_test = X_test_ext.reset_index(drop=True)
+            y_test = pd.Series(y_test_ext).reset_index(drop=True)
+            log(f"External split → Train {X_train.shape} | Test {X_test.shape} | {ram_text()}")
+        else:
+            test_size = float(cfg.get("test_size") or 0.2)
+            strat = y if task == "classification" else None
+            try:
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=test_size, random_state=random_state, stratify=strat
+                )
+            except Exception:
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=test_size, random_state=random_state
+                )
+            X_train = X_train.reset_index(drop=True)
+            X_test = X_test.reset_index(drop=True)
+            y_train = pd.Series(y_train).reset_index(drop=True)
+            y_test = pd.Series(y_test).reset_index(drop=True)
+            log(f"Train {X_train.shape} | Test {X_test.shape} | {ram_text()}")
         progress(20)
 
         if task == "classification" and len(class_names) > 2:
@@ -525,7 +665,8 @@ def main(cfg_path: str):
                 X_train=X_train, X_test=X_test, y_train=y_train, y_test=y_test,
                 class_names=class_names, timeout=timeout, random_state=random_state, hb=hb,
                 job_id=job_id, model_dir=model_dir, job_dir=job_dir, features=features,
-                safe_names=safe_names, target=target, lib_version=lib_version))
+                safe_names=safe_names, target=target, lib_version=lib_version,
+                feature_schema=feature_schema))
             return
 
         # ------------------------------------------------------------ data prepare
@@ -535,13 +676,19 @@ def main(cfg_path: str):
                 if not pd.api.types.is_numeric_dtype(frame[col]):
                     frame[col] = frame[col].astype(object)
         train_cats = [c for c in X_train.columns if not pd.api.types.is_numeric_dtype(X_train[c])]
+        # LinearModel / KNeighbors / MLP need scaled numerics (automl-alex need_norm_data_models)
+        need_norm = any(m in (cfg.get("models_names") or []) for m in ("LinearModel", "KNeighbors", "MLP"))
+        # Empty encoder list when no cats — otherwise de.save() KeyErrors on unfitted OneHotEncoder
+        # and every Optuna trial spam-logs "No categorical columns found".
+        cat_encoders = ["OneHotEncoder", "CountEncoder"] if train_cats else []
         de_kwargs = filter_kwargs(
             DataPrepare.__init__,
             cat_features=train_cats if train_cats else None,
-            cat_encoder_names=["OneHotEncoder", "CountEncoder"],
+            cat_encoder_names=cat_encoders,
             clean_outliers=False,
             num_generator_features=False,  # <-- 1.6.x default True => ~700 extra columns
             drop_invariant=True,
+            normalization=need_norm,
             reduce_memory=True,
             random_state=random_state,
             verbose=1,
@@ -567,18 +714,32 @@ def main(cfg_path: str):
                 log(f"Models not available in this automl-alex build, skipped: "
                     f"{[m for m in models_names if m not in available]} (available: {available})")
             models_names = ok_models or [m for m in ("LightGBM", "LinearModel") if m in available] or available[:1]
+        # Prefer stable tree models first; keep user order otherwise
+        preferred = ["LightGBM", "CatBoost", "RandomForest", "ExtraTrees", "XGBoost", "LinearModel", "KNeighbors", "MLP"]
+        models_names = sorted(
+            models_names,
+            key=lambda n: preferred.index(n) if n in preferred else 99,
+        )
         # Regression + XGBoost in automl-alex 1.6.x can trial logistic loss (needs y in (0,1)).
-        # Keep it listed but failed trials are caught; prefer stable defaults first.
         if task == "regression" and "XGBoost" in models_names:
             log("Note: XGBoost trials that use logistic loss will be skipped (Optuna catch); "
-                "LightGBM/LinearModel continue.")
+                "other models continue.")
+        if any(m in models_names for m in ("LinearModel", "KNeighbors", "MLP")):
+            log("LinearModel/KNeighbors/MLP selected — DataPrepare normalization=" + str(need_norm))
 
+        # AutoML-Alex expects a CALLABLE metric (sklearn), not a string name.
+        # String -> TypeError: 'str' object is not callable inside __metric_direction_detected__.
+        metric_fn = metrics.roc_auc_score if task == "classification" else metrics.mean_squared_error
+        metric_name = "roc_auc_score" if task == "classification" else "mean_squared_error"
         cls = BestSingleModelClassifier if task == "classification" else BestSingleModelRegressor
         bm_kwargs = filter_kwargs(
             cls.__init__,
             models_names=models_names,
             clean_and_encod_data=False,  # we already ran DataPrepare above
             opt_data_prepare=False,
+            # Critical: default auto_parameters=True IGNORES folds/cold_start/early_stop below.
+            auto_parameters=False,
+            metric=metric_fn,
             # 1.6.x tries WOEEncoder, which only accepts a binary target -> crash for regression
             target_encoders_names=(
                 ["TargetEncoder", "JamesSteinEncoder", "CatBoostEncoder"]
@@ -595,7 +756,7 @@ def main(cfg_path: str):
         )
         bm_kwargs.pop("self", None)
         model = cls(**bm_kwargs)
-        metric_name = "roc_auc_score" if task == "classification" else "mean_squared_error"
+        log(f"BestSingleModel auto_parameters=False folds=3 metric={metric_name} (callable)")
 
         log(f"Starting optimisation: timeout={timeout}s models={models_names}")
         log("You will see '[alive]' lines every 5s and 'trial #N' lines — if they appear, it is working.")
@@ -642,22 +803,32 @@ def main(cfg_path: str):
         p_test = to_1d(model.predict(X_test_p))
 
         scores = {}
+        primary_metric = None
         if task == "classification":
             lab_train = (p_train >= 0.5).astype(int)
             lab_test = (p_test >= 0.5).astype(int)
             scores["accuracy_train"] = float(metrics.accuracy_score(y_train, lab_train))
             scores["accuracy_test"] = float(metrics.accuracy_score(y_test, lab_test))
+            scores["balanced_accuracy_test"] = float(metrics.balanced_accuracy_score(y_test, lab_test))
+            scores["f1_test"] = float(metrics.f1_score(y_test, lab_test, zero_division=0))
+            scores["precision_test"] = float(metrics.precision_score(y_test, lab_test, zero_division=0))
+            scores["recall_test"] = float(metrics.recall_score(y_test, lab_test, zero_division=0))
             try:
                 scores["roc_auc_train"] = float(metrics.roc_auc_score(y_train, p_train))
                 scores["roc_auc_test"] = float(metrics.roc_auc_score(y_test, p_test))
+                primary_metric = "roc_auc_test"
             except Exception as e:
                 log(f"roc_auc error: {e}")
+                primary_metric = "f1_test"
             try:
+                labels = list(range(len(class_names or []))) or None
                 scores["classification_report"] = metrics.classification_report(
                     y_test, lab_test, output_dict=True, zero_division=0,
-                    target_names=class_names,
+                    target_names=class_names, labels=labels,
                 )
-                scores["confusion_matrix"] = metrics.confusion_matrix(y_test, lab_test).tolist()
+                scores["confusion_matrix"] = metrics.confusion_matrix(
+                    y_test, lab_test, labels=labels
+                ).tolist()
             except Exception as e:
                 log(f"report error: {e}")
             y_pred_out = [class_names[int(v)] for v in lab_test]
@@ -668,11 +839,16 @@ def main(cfg_path: str):
             scores["mae_test"] = float(metrics.mean_absolute_error(y_test, p_test))
             scores["mse_test"] = float(metrics.mean_squared_error(y_test, p_test))
             scores["rmse_test"] = float(np.sqrt(scores["mse_test"]))
+            primary_metric = "rmse_test"
             yt = np.asarray(y_test, dtype=float)
-            if not np.any(yt == 0):
-                scores["mape_test"] = float(np.mean(np.abs((yt - p_test) / yt)) * 100)
+            if np.any(np.abs(yt) > 1e-12):
+                mask = np.abs(yt) > 1e-12
+                scores["mape_test"] = float(np.mean(np.abs((yt[mask] - p_test[mask]) / yt[mask])) * 100)
             y_pred_out = [float(v) for v in p_test]
             y_true_out = [float(v) for v in yt]
+        if primary_metric:
+            scores["primary_metric"] = primary_metric
+            scores["primary_value"] = scores.get(primary_metric)
         log(f"Scores: { {k: v for k, v in scores.items() if not isinstance(v, (dict, list))} }")
 
         best_name = getattr(model, "best_model_name", None)
@@ -692,7 +868,19 @@ def main(cfg_path: str):
         if not (model_dir / (opt_zip_base + ".zip")).is_file():
             raise RuntimeError("automl-alex did not write the model archive")
         de_zip_base = f"automl_{job_id}_dp"
-        de.save(name=de_zip_base, folder=str(model_dir) + os.sep)  # keeps fitted encoders
+        # DataPrepare.save assumes every name in cat_encoder_names was fitted; skip missing.
+        _enc_names = list(getattr(de, "cat_encoder_names", []) or [])
+        _fitted = getattr(de, "_fit_cat_encoders", None) or {}
+        _skip = [n for n in _enc_names if n not in _fitted]
+        if _skip:
+            log(f"DataPrepare.save: skip unfitted encoders {_skip}")
+            de.cat_encoder_names = [n for n in _enc_names if n in _fitted]
+        try:
+            de.save(name=de_zip_base, folder=str(model_dir) + os.sep)
+        finally:
+            de.cat_encoder_names = _enc_names
+        if not (model_dir / (de_zip_base + ".zip")).is_file():
+            raise RuntimeError("DataPrepare archive was not written")
         model_name = f"automl_{job_id}.joblib"
         model_path = model_dir / model_name
         bundle = {
@@ -710,6 +898,7 @@ def main(cfg_path: str):
             "label_encoder": label_encoder,
             "library_version": lib_version,
             "prepared_columns": list(X_train_p.columns),
+            "feature_schema": feature_schema,
         }
         joblib.dump(bundle, model_path)
         meta = {
@@ -721,6 +910,8 @@ def main(cfg_path: str):
             "best_model_name": str(best_name) if best_name is not None else None,
             "scores": {k: v for k, v in scores.items() if not isinstance(v, (dict, list))},
             "library_version": lib_version,
+            "feature_schema": feature_schema,
+            "class_names": class_names,
         }
         (model_dir / f"automl_{job_id}.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
         log(f"Saved model {model_path}")
@@ -732,6 +923,7 @@ def main(cfg_path: str):
                 hist = json.loads(history.to_json(orient="records", date_format="iso"))
         except Exception:
             hist = None
+        training_curve = training_curve_from_history(hist, task=task)
 
         # Feature importance via AutoML-Alex CV API when available (_base / cross_validation)
         fi = None
@@ -775,6 +967,8 @@ def main(cfg_path: str):
             "test_shape": list(X_test_p.shape),
             "library_version": lib_version,
             "plots": plots,
+            "feature_schema": feature_schema,
+            "training_curve": training_curve,
         }
         (job_dir / f"{job_id}_result.json").write_text(json.dumps(result, default=str), encoding="utf-8")
         progress(100)

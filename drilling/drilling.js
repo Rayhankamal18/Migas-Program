@@ -948,8 +948,19 @@
     return scaleMax(max);
   }
 
+  function viewEvents() {
+    if (state.viewMode === "compare") {
+      const list = [];
+      visibleCompareWells().forEach((well) => {
+        (well.events || []).forEach((item) => list.push(item));
+      });
+      return list;
+    }
+    return state.events;
+  }
+
   function plottedEvents() {
-    return state.events
+    return viewEvents()
       .filter((item) => item.day != null && chartDepth(item) != null)
       .map((item) => ({ ...item, depth: chartDepth(item) }))
       .sort((a, b) => a.day - b.day || a.depth - b.depth);
@@ -1209,14 +1220,27 @@
         icon: categoryIcon(item.category)
       });
     });
-    const showDepth = curve.length > 0 && !state.legendOff.depth;
+    const showDepth = state.viewMode === "compare"
+      ? (multiCurves.some((item) => item.points && item.points.length) && !state.legendOff.depth)
+      : (curve.length > 0 && !state.legendOff.depth);
     const legendItems = [];
     if (showDepth) {
-      const well = (state.well || "").trim();
-      legendItems.push({
-        type: "depth",
-        label: curveInfo.fromEvents ? "Kedalaman masalah" : (well ? `Depth ${well}` : "Kedalaman sumur")
-      });
+      if (state.viewMode === "compare") {
+        multiCurves.forEach((item) => {
+          if (!item.points || !item.points.length) return;
+          legendItems.push({
+            type: "depth",
+            label: item.name || "Sumur",
+            color: item.color || DEPTH_COLOR
+          });
+        });
+      } else {
+        const well = (state.well || "").trim();
+        legendItems.push({
+          type: "depth",
+          label: curveInfo.fromEvents ? "Kedalaman masalah" : (well ? `Depth ${well}` : "Kedalaman sumur")
+        });
+      }
     }
     categories.forEach((item) => legendItems.push({
       type: "event",
@@ -1269,9 +1293,9 @@
       row.forEach((item) => {
         ctx.save();
         if (item.type === "depth") {
-          ctx.strokeStyle = DEPTH_COLOR;
+          ctx.strokeStyle = item.color || DEPTH_COLOR;
           ctx.lineWidth = 2.4;
-          ctx.setLineDash([7, 4]);
+          ctx.setLineDash(item.color ? [] : [7, 4]);
           ctx.beginPath();
           ctx.moveTo(item.x, y);
           ctx.lineTo(item.x + Math.min(22, swatch - 6), y);
@@ -1532,7 +1556,7 @@
       ctx.stroke();
     });
     paintShoeGuides(ctx, figure);
-    if (figure.multiCurves && figure.multiCurves.length) {
+    if (figure.showDepth && figure.multiCurves && figure.multiCurves.length) {
       figure.multiCurves.forEach((curve) => {
         if (!curve.points || !curve.points.length) return;
         ctx.beginPath();
@@ -2126,16 +2150,20 @@
 
   function legendEntries() {
     const entries = [];
-    if (!state.spread && curveSource().points.length) {
+    const events = viewEvents();
+    if (!state.spread && (state.viewMode === "compare"
+      ? visibleCompareWells().some((well) => (well.progress || []).some((item) => item.day != null && chartDepth(item) != null)
+        || (well.events || []).some((item) => item.day != null && chartDepth(item) != null))
+      : curveSource().points.length)) {
       entries.push({
         kind: "depth",
         key: "depth",
-        label: depthLegendLabel(),
+        label: state.viewMode === "compare" ? "Kedalaman sumur" : depthLegendLabel(),
         on: !state.legendOff.depth
       });
     }
     const groups = new Map();
-    state.events.forEach((item) => {
+    events.forEach((item) => {
       const key = categoryKey(item.category);
       let group = groups.get(key);
       if (!group) {
@@ -2198,18 +2226,28 @@
     const count = document.getElementById("ds-legend-count");
     if (!panel || !host || !count) return;
     const entries = legendEntries();
-    const shown = state.events.filter((item) => categoryShown(item.category)).length;
-    const signature = JSON.stringify({ shown, spread: state.spread, entries });
+    const events = viewEvents();
+    const shown = events.filter((item) => categoryShown(item.category)).length;
+    const signature = JSON.stringify({
+      shown,
+      total: events.length,
+      spread: state.spread,
+      viewMode: state.viewMode,
+      wells: visibleCompareWells().map((well) => well.id),
+      entries
+    });
     const note = document.getElementById("ds-legend-note");
     if (note) {
       note.textContent = state.spread
         ? `Masalah dikelompokkan menurut batas formasi pada ${depthUnitLabel()}. Seret nama formasi di kiri grafik untuk mengubah urutan, lalu Reset urutan untuk kembali ke susunan kedalaman. Matikan satu jenis untuk mengeluarkannya.`
-        : "Angka ini di luar grafik dan tidak ikut terunduh. Garis kedalaman tidak dihitung sebagai masalah.";
+        : state.viewMode === "compare"
+          ? "Mode Bandingkan menampilkan semua masalah dari sumur yang dicentang. Angka ini di luar grafik dan tidak ikut terunduh."
+          : "Angka ini di luar grafik dan tidak ikut terunduh. Garis kedalaman tidak dihitung sebagai masalah.";
     }
     if (signature === legendSignature) return;
     legendSignature = signature;
     panel.hidden = !entries.length;
-    count.textContent = state.events.length ? `${shown} masalah` : "";
+    count.textContent = events.length ? `${shown} masalah` : "";
     host.innerHTML = entries.map((entry) => {
       const countHtml = entry.kind === "event" ? `<span class="ds-legend-n">${entry.count}</span>` : "";
       return `<button type="button" class="ds-legend-switch" data-legend="${esc(entry.kind)}" data-key="${esc(entry.key)}" aria-pressed="${entry.on ? "true" : "false"}">
@@ -2234,6 +2272,7 @@
   function draw() {
     const canvas = document.getElementById("ds-chart");
     if (!canvas) return;
+    pullActiveFromState();
     fillCasingSelect();
     try {
       lastScene = renderCanvas(canvas, 2);

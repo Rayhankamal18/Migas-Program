@@ -3,18 +3,28 @@
   const CACHE_KEY = "migas-ai-cache-v1";
 
   const DEFAULTS = {
-    provider: "openai",
-    model: "gpt-4o-mini",
+    provider: "demo",
+    model: "demo-local",
     apiKey: "",
     endpoint: "",
     vpsUrl: ""
   };
 
   const PROVIDER_ENDPOINTS = {
+    demo: "",
     openai: "https://api.openai.com/v1/chat/completions",
     openrouter: "https://openrouter.ai/api/v1/chat/completions",
     deepseek: "https://api.deepseek.com/chat/completions",
     grok: "https://api.x.ai/v1/chat/completions",
+    custom: ""
+  };
+
+  const PROVIDER_MODELS = {
+    demo: "demo-local",
+    openai: "gpt-4o-mini",
+    openrouter: "openai/gpt-4o-mini",
+    deepseek: "deepseek-chat",
+    grok: "grok-2-latest",
     custom: ""
   };
 
@@ -25,7 +35,13 @@
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
       if (!raw) return Object.assign({}, DEFAULTS);
-      return Object.assign({}, DEFAULTS, JSON.parse(raw));
+      const loaded = Object.assign({}, DEFAULTS, JSON.parse(raw));
+      // Belum punya key → default ke Demo supaya Generate bisa diuji
+      if (!loaded.apiKey && loaded.provider !== "demo" && loaded.provider !== "custom") {
+        loaded.provider = "demo";
+        loaded.model = "demo-local";
+      }
+      return loaded;
     } catch (e) {
       return Object.assign({}, DEFAULTS);
     }
@@ -114,7 +130,7 @@
     if (!host) return;
     const keys = Object.keys(cache.summaries || {});
     if (!keys.length) {
-      host.innerHTML = '<p class="micro">Belum ada ringkasan tersimpan.</p>';
+      host.innerHTML = '<div class="empty-state"><strong>Belum ada ringkasan</strong><span>Generate dari panel kiri untuk melihat hasil di sini.</span></div>';
       return;
     }
     host.innerHTML = keys.map((k) => {
@@ -128,7 +144,7 @@
     const host = document.getElementById("ai-casing-results");
     if (!host) return;
     if (!cache.casingSuggestion) {
-      host.innerHTML = '<p class="micro">Belum ada saran casing.</p>';
+      host.innerHTML = '<div class="empty-state"><strong>Belum ada usulan casing</strong><span>Isi nama sumur proposed, lalu generate.</span></div>';
       return;
     }
     const item = cache.casingSuggestion;
@@ -136,10 +152,112 @@
       '</h3><p>' + (item.text || "") + '</p><p class="micro">Disimpan: ' + (item.savedAt || "") + "</p></article>";
   }
 
+  function isDemoProvider() {
+    return (settings.provider || "") === "demo";
+  }
+
+  function tryParseJsonBlob(text) {
+    if (!text) return null;
+    const s = String(text);
+    const start = s.indexOf("{");
+    const end = s.lastIndexOf("}");
+    if (start < 0 || end <= start) return null;
+    try {
+      return JSON.parse(s.slice(start, end + 1));
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /** Local demo replies — no API key / no internet LLM needed (uji UI saja). */
+  function demoCompletion(messages) {
+    const user = (messages || []).filter(function (m) { return m.role === "user"; }).pop();
+    const system = (messages || []).filter(function (m) { return m.role === "system"; }).pop();
+    const userText = (user && user.content) || "";
+    const sysText = ((system && system.content) || "").toLowerCase();
+    const payload = tryParseJsonBlob(userText);
+
+    // Casing proposal
+    if (sysText.indexOf("casing") >= 0 || (payload && payload.proposedWell)) {
+      const name = (payload && payload.proposedWell) || "Proposed Well";
+      const notes = (payload && payload.designNotes) || "";
+      const offsets = (payload && payload.offsetWells) || [];
+      const shoes = [];
+      offsets.forEach(function (w) {
+        (w.casings || []).forEach(function (c) {
+          const tvd = Number(c.shoeTvd != null ? c.shoeTvd : c.shoeMd);
+          if (!Number.isFinite(tvd)) return;
+          shoes.push({ name: c.name || "Casing", tvd: tvd, from: w.name || "" });
+        });
+      });
+      // group by rough name family
+      const byKind = {};
+      shoes.forEach(function (s) {
+        const key = String(s.name).toLowerCase();
+        if (!byKind[key]) byKind[key] = [];
+        byKind[key].push(s.tvd);
+      });
+      const suggested = Object.keys(byKind)
+        .map(function (k) {
+          const arr = byKind[k].slice().sort(function (a, b) { return a - b; });
+          const mid = arr[Math.floor(arr.length / 2)];
+          return { name: k, tvd: Math.round(mid) };
+        })
+        .sort(function (a, b) { return a.tvd - b.tvd; })
+        .slice(0, 6);
+      if (!suggested.length) {
+        suggested.push(
+          { name: "conductor", tvd: 300 },
+          { name: "surface", tvd: 1500 },
+          { name: "intermediate", tvd: 4500 },
+          { name: "production", tvd: 7500 }
+        );
+      }
+      const list = suggested
+        .map(function (s, i) { return (i + 1) + ". " + s.name + " @ " + s.tvd + " ft TVD"; })
+        .join("\n");
+      return (
+        "[DEMO · tanpa API key] Usulan awal casing untuk sumur " + name +
+        " disusun dari median shoe TVD offset wells yang tersedia" +
+        (offsets.length ? " (" + offsets.length + " sumur)" : "") +
+        (notes ? ", dengan catatan desain: " + notes : "") +
+        ". Angka ini hanya untuk uji antarmuka — bukan rekomendasi engineering final; " +
+        "validasi dengan PP/FG, kick tolerance, dan standar perusahaan sebelum dipakai.\n\n" +
+        list
+      );
+    }
+
+    // Well summary
+    const well = payload || {};
+    const wname = well.name || "sumur";
+    const td =
+      (well.drilling && (well.drilling.tdTvd || well.drilling.td)) ||
+      (well.casing && (well.casing.tdTvd || well.casing.tdMd)) ||
+      null;
+    const nCsg = well.casing && Array.isArray(well.casing.casings) ? well.casing.casings.length : 0;
+    const nEvt = well.drilling && well.drilling.eventCount != null ? well.drilling.eventCount : 0;
+    const forms =
+      (well.drilling && well.drilling.formations) ||
+      [];
+    return (
+      "[DEMO · tanpa API key] Sumur " + wname +
+      (td != null ? " mencapai sekitar " + td + " (MD/TVD sesuai data proyek)" : "") +
+      (nCsg ? ", dengan " + nCsg + " string casing tercatat" : "") +
+      (nEvt ? " dan " + nEvt + " event drilling ringkas" : "") +
+      (forms && forms.length ? ". Formasi terkait: " + forms.slice(0, 6).join(", ") : "") +
+      ". Ringkasan ini dibuat lokal untuk uji fitur AI Suggestion; ganti provider ke OpenRouter/DeepSeek/OpenAI bila ingin jawaban model sungguhan."
+    );
+  }
+
   async function chatCompletion(messages) {
-    if (!settings.apiKey) throw new Error("API key belum diisi di Settings.");
+    if (isDemoProvider()) {
+      // slight delay so UI status feels real
+      await new Promise(function (r) { setTimeout(r, 350); });
+      return demoCompletion(messages);
+    }
+    if (!settings.apiKey) throw new Error("API key belum diisi di Pengaturan. Untuk uji gratis, pilih provider Demo.");
     const url = endpointFor();
-    if (!url) throw new Error("Endpoint API belum diisi.");
+    if (!url) throw new Error("Endpoint API belum diisi di Pengaturan.");
     const headers = {
       "Content-Type": "application/json",
       Authorization: "Bearer " + settings.apiKey
@@ -267,15 +385,46 @@
     }
   }
 
+  function syncProviderFields() {
+    const prov = document.getElementById("set-provider");
+    const model = document.getElementById("set-model");
+    const key = document.getElementById("set-apikey");
+    const ep = document.getElementById("set-endpoint");
+    const hint = document.getElementById("set-ai-hint");
+    if (!prov) return;
+    const p = prov.value || "demo";
+    const demo = p === "demo";
+    if (model && (!model.value.trim() || model.dataset.auto === "1" || PROVIDER_MODELS[model.value])) {
+      model.value = PROVIDER_MODELS[p] || model.value;
+      model.dataset.auto = "1";
+    }
+    if (key) {
+      key.disabled = demo;
+      key.placeholder = demo ? "(tidak perlu — mode Demo)" : "sk-...";
+    }
+    if (ep) {
+      ep.disabled = demo;
+      ep.placeholder = demo
+        ? "(tidak perlu — jawaban dibuat lokal)"
+        : (PROVIDER_ENDPOINTS[p] || "https://...");
+    }
+    if (hint) {
+      hint.textContent = demo
+        ? "Mode Demo: uji Generate tanpa beli API. Jawaban dilabeli [DEMO] dan memakai data sumur lokal."
+        : "Isi API Key provider yang dipilih, lalu Simpan. Tombol Uji AI mengecek chat completion.";
+    }
+  }
+
   function openSettings() {
     const modal = document.getElementById("settings-modal");
     if (!modal) return;
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ""; };
-    set("set-provider", settings.provider || "openai");
-    set("set-model", settings.model || "");
+    set("set-provider", settings.provider || "demo");
+    set("set-model", settings.model || PROVIDER_MODELS[settings.provider] || "demo-local");
     set("set-apikey", settings.apiKey || "");
     set("set-endpoint", settings.endpoint || "");
     set("set-vps-url", settings.vpsUrl || "");
+    syncProviderFields();
     modal.hidden = false;
     modal.setAttribute("aria-hidden", "false");
     document.body.classList.add("settings-open");
@@ -290,10 +439,10 @@
   }
 
   async function saveSettings() {
-    settings.provider = document.getElementById("set-provider").value || "openai";
-    settings.model = document.getElementById("set-model").value.trim();
-    settings.apiKey = document.getElementById("set-apikey").value.trim();
-    settings.endpoint = document.getElementById("set-endpoint").value.trim();
+    settings.provider = document.getElementById("set-provider").value || "demo";
+    settings.model = document.getElementById("set-model").value.trim() || (PROVIDER_MODELS[settings.provider] || "demo-local");
+    settings.apiKey = settings.provider === "demo" ? "" : document.getElementById("set-apikey").value.trim();
+    settings.endpoint = settings.provider === "demo" ? "" : document.getElementById("set-endpoint").value.trim();
     settings.vpsUrl = document.getElementById("set-vps-url").value.trim();
     const apiBaseEl = document.getElementById("set-api-base");
     if (apiBaseEl && window.MigasStorage) window.MigasStorage.setApiBase(apiBaseEl.value.trim());
@@ -301,7 +450,12 @@
     const apiTokEl = document.getElementById("set-api-token");
     if (apiTokEl) localStorage.setItem("migas-api-token", apiTokEl.value.trim());
     saveSettingsLocal();
-    setStatus("settings-status", "Settings disimpan di browser.");
+    setStatus(
+      "settings-status",
+      settings.provider === "demo"
+        ? "Demo aktif — Generate AI Suggestion tanpa API key."
+        : "Settings disimpan di browser."
+    );
     if (settings.vpsUrl) {
       try {
         const res = await fetch(settings.vpsUrl, {
@@ -420,25 +574,37 @@
         }
       } catch (e) { /* offline */ }
     })();
+    const provSel = document.getElementById("set-provider");
+    if (provSel && !provSel._wiredDemo) {
+      provSel._wiredDemo = true;
+      provSel.addEventListener("change", syncProviderFields);
+    }
+    const modelInp = document.getElementById("set-model");
+    if (modelInp && !modelInp._wiredDemo) {
+      modelInp._wiredDemo = true;
+      modelInp.addEventListener("input", function () { modelInp.dataset.auto = "0"; });
+    }
     const testApi = document.getElementById("settings-test-api");
     if (testApi) testApi.addEventListener("click", async () => {
       try {
-        // persist fields first
+        // persist current AI fields into memory for the probe
+        settings.provider = (document.getElementById("set-provider") || {}).value || settings.provider;
+        settings.model = ((document.getElementById("set-model") || {}).value || "").trim() || settings.model;
+        settings.apiKey = ((document.getElementById("set-apikey") || {}).value || "").trim();
+        settings.endpoint = ((document.getElementById("set-endpoint") || {}).value || "").trim();
         const apiBaseEl = document.getElementById("set-api-base");
         if (apiBaseEl) localStorage.setItem("migas-api-base", (apiBaseEl.value || "").trim().replace(/\/$/, ""));
         const apiTokEl = document.getElementById("set-api-token");
         if (apiTokEl) localStorage.setItem("migas-api-token", (apiTokEl.value || "").trim());
-        if (window.MigasStorage && window.MigasStorage.testConnection) {
-          const data = await window.MigasStorage.testConnection();
-          setStatus("settings-status", "API OK: " + JSON.stringify(data));
-        } else {
-          const base = (localStorage.getItem("migas-api-base") || location.origin || "").replace(/\/$/, "");
-          const res = await fetch(base + "/api/health");
-          const data = await res.json();
-          setStatus("settings-status", "API OK: " + JSON.stringify(data));
-        }
+
+        setStatus("settings-status", "Menguji AI Suggestion…");
+        const reply = await chatCompletion([
+          { role: "system", content: "You are a petroleum drilling engineer. Write exactly one concise paragraph summary in Indonesian about the well from the JSON data. No bullet points." },
+          { role: "user", content: 'Ringkas sumur berikut dalam 1 paragraf:\n{"name":"TEST-1","casing":{"tdTvd":8000,"casings":[{"name":"surface","shoeTvd":1500}]},"drilling":{"tdTvd":8000,"eventCount":3,"formations":["A","B"]}}' }
+        ]);
+        setStatus("settings-status", "AI OK (" + settings.provider + "): " + String(reply).slice(0, 160) + (reply.length > 160 ? "…" : ""));
       } catch (err) {
-        setStatus("settings-status", "API failed: " + (err.message || err));
+        setStatus("settings-status", "AI failed: " + (err.message || err));
       }
     });
     const genSum = document.getElementById("ai-generate-summary");

@@ -1,5 +1,18 @@
-AutoML — FIXED-v3 base + 10/10 continuation
+AutoML — FIXED-v4 (2026-11-02)
 ==========================================
+
+Aligned with standard tabular AutoML (AutoGluon / Azure-style):
+  - Problem-type inference: 2 unique / few integer classes -> classification;
+    many continuous uniques -> regression; manual override in UI.
+  - Upload preview returns n_unique, unique_ratio, suggested_task per column.
+  - Train/test hold-out; DataPrepare fit on train only / transform on test.
+  - Classification scores: ROC-AUC, F1, precision, recall, balanced accuracy.
+  - Regression scores: RMSE (primary), MAE, R2, MAPE.
+  - Multiclass: impute + OrdinalEncoder; predict keeps categoricals as object.
+  - Default model candidates: LightGBM, CatBoost, LinearModel.
+  - auto_parameters=False so folds/cold_start/timeout from worker are honored.
+  - Drop ID / near-unique text columns before train (anti-leakage).
+  - predict + optimize-inputs load Alex via opt_zip/de_zip (automl_runtime.py).
 
 Core library: AutoML_Alex only for binary classification / regression training.
 Documented APIs used:
