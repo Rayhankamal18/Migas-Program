@@ -1,0 +1,27 @@
+AutoML — FIXED-v3 base + 10/10 continuation
+==========================================
+
+Core library: AutoML_Alex only for binary classification / regression training.
+Documented APIs used:
+  - DataPrepare(fit_transform / transform)
+  - BestSingleModelClassifier / BestSingleModelRegressor + model.opt()
+  - model.predict() as in README examples
+  - model.best_model_name / best_model_param
+  - opt() return value -> study.trials_dataframe() as history
+  - cv_model.get_feature_importance(X) when the fitted model supports it
+
+Multiclass (3+ classes): AutoML_Alex README marks multiclass as in progress;
+  WOE target encoding requires binary y. Path: LightGBM + Optuna (explicit fallback).
+
+Evaluation plots (not reimplemented AutoML internals):
+  - sklearn.metrics.roc_curve / precision_recall_curve / roc_auc_score on model scores
+  - confusion_matrix / classification_report from sklearn (same as training evaluation)
+  - residual / actual-vs-predicted from saved y_test / y_pred_test
+
+New in this package:
+  - Step 1: list + load CSV from migas_data/uploads
+  - Step 6: real plots (classification + regression) + PNG/JPG download
+  - Step 8: table input, paste (Excel/TSV/CSV), CSV file predict, download predictions
+  - result.plots: roc_curves, pr_curves, feature_importance
+
+Apply: copy over migas-portable v2, Start_Migas.bat, Ctrl+Shift+R in browser.

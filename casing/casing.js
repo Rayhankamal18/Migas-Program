@@ -21,7 +21,10 @@
     tvdMax: null,
     endLabel: "End of Well",
     formations: [],
-    wells: []
+    wells: [],
+    viewMode: "one", // one | selected | multi
+    activeWellId: "",
+    showPpfg: false
   };
 
   const openWells = new Set();
@@ -293,12 +296,16 @@
     const formations = validFormations()
       .map((fm) => ({ name: (fm.name || "").trim(), color: fm.color || "#7A3412", top: fm.topTvd, base: fm.baseTvd }))
       .sort((a, b) => a.top - b.top || a.base - b.base);
-    const wells = state.wells.map((well, index) => ({
+    const sourceWells = visibleWellsForView();
+    const wells = sourceWells.map((well, index) => ({
+      id: well.id,
       name: (well.name || "").trim() || "Sumur",
       color: wellColor(well.color, index),
       tdTvd: well.tdTvd,
       items: well.casings.map((casing) => preparedCasing(casing, well)).filter(Boolean).sort((a, b) => a.shoeTvd - b.shoeTvd || a.shoeMd - b.shoeMd),
-      tdText: tdLines(well)
+      tdText: tdLines(well),
+      pp: Array.isArray(well.pp) ? well.pp : [],
+      fg: Array.isArray(well.fg) ? well.fg : []
     }));
     const drawable = formations.length || wells.some((well) => well.items.length || well.tdTvd != null);
     if (!drawable) {
@@ -600,6 +607,67 @@
         });
       });
     });
+    paintPpfg(ctx, figure);
+  }
+
+  function paintPpfg(ctx, figure) {
+    if (!state.showPpfg || state.viewMode !== "one") return;
+    if (!figure || !figure.wells || !figure.wells.length) return;
+    const well = figure.wells[0];
+    const track = figure.plot || figure;
+    // Use formation column area right side for pressure track if available
+    const top = figure.plotTop != null ? figure.plotTop : (figure.top || 80);
+    const height = figure.plotH != null ? figure.plotH : (figure.contentH || 500);
+    const depthMax = figure.depthMax || figure.tvdMax || 1;
+    const yOf = (d) => top + (Math.max(0, d) / depthMax) * height;
+    const pairs = [];
+    (well.pp || []).forEach((p) => { if (p.depthTvd != null && p.value != null) pairs.push({ d: p.depthTvd, v: p.value, kind: "pp" }); });
+    (well.fg || []).forEach((p) => { if (p.depthTvd != null && p.value != null) pairs.push({ d: p.depthTvd, v: p.value, kind: "fg" }); });
+    if (!pairs.length) return;
+    let vmin = Infinity, vmax = -Infinity;
+    pairs.forEach((p) => { vmin = Math.min(vmin, p.v); vmax = Math.max(vmax, p.v); });
+    if (!(vmax > vmin)) { vmin -= 0.5; vmax += 0.5; }
+    const pad = (vmax - vmin) * 0.1;
+    vmin -= pad; vmax += pad;
+    const trackX = (figure.w || 900) - 120;
+    const trackW = 90;
+    const xOf = (v) => trackX + ((v - vmin) / (vmax - vmin)) * trackW;
+    ctx.save();
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(trackX, top, trackW, height);
+    ctx.fillStyle = "#64748b";
+    ctx.font = "10px Arial, Helvetica, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("ppg", trackX + trackW / 2, top - 6);
+    const drawSeries = (points, color) => {
+      const pts = points.filter((p) => p.depthTvd != null && p.value != null).sort((a, b) => a.depthTvd - b.depthTvd);
+      if (pts.length < 1) return;
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const x = xOf(p.value);
+        const y = yOf(p.depthTvd);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([]);
+      ctx.stroke();
+      pts.forEach((p) => {
+        ctx.beginPath();
+        ctx.fillStyle = color;
+        ctx.arc(xOf(p.value), yOf(p.depthTvd), 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    };
+    drawSeries(well.pp || [], "#2563eb");
+    drawSeries(well.fg || [], "#dc2626");
+    ctx.fillStyle = "#2563eb";
+    ctx.textAlign = "left";
+    ctx.fillText("PP", trackX + 4, top + 12);
+    ctx.fillStyle = "#dc2626";
+    ctx.fillText("FG", trackX + 28, top + 12);
+    ctx.restore();
   }
 
   function drawString(ctx, item, host) {
@@ -988,7 +1056,18 @@
       ? well.casings.map((casing, casingIndex) => casingHtml(casing, casingIndex, well.casings.length, well)).join("")
       : '<p class="micro">Belum ada rangkaian.</p>';
     const color = wellColor(well.color, index);
-    return `<div class="csg-well-card" data-well="${well.id}">
+    const isActive = well.id === state.activeWellId;
+    const isSelected = well.selected !== false;
+    return `<div class="csg-well-card${isActive ? " active-well" : ""}" data-well="${well.id}">
+      <div class="csg-well-toolbar">
+        <label class="csg-pick" title="Centang untuk mode Terpilih">
+          <input type="checkbox" data-well-selected="${well.id}" ${isSelected ? "checked" : ""} />
+          <span>Tampil</span>
+        </label>
+        <button type="button" class="btn ${isActive ? "" : "ghost"} csg-activate" data-well-activate="${well.id}" title="Jadikan sumur aktif untuk mode Satu sumur">
+          ${isActive ? "★ Aktif" : "Jadikan aktif"}
+        </button>
+      </div>
       <div class="csg-well-head">
         <details class="csg-well" data-well="${well.id}"${openWells.has(well.id) ? " open" : ""}>
         <summary><span data-summary>${esc(wellSummary(well))}</span></summary>
@@ -1238,8 +1317,91 @@
       color: WELL_COLORS[(Math.max(0, index - 1)) % WELL_COLORS.length],
       tdMd: null,
       tdTvd: null,
-      casings: [blankCasing()]
+      casings: [blankCasing()],
+      selected: true,
+      pp: [], // {depthTvd, value}
+      fg: []
     };
+  }
+
+  function parseDepthValuePairs(text) {
+    const rows = [];
+    String(text || "").split(/\r?\n/).forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      const parts = trimmed.split(/[\t,;]+/).map((p) => p.trim()).filter((p) => p !== "");
+      if (parts.length < 2) return;
+      const depth = parseNum(parts[0]);
+      const value = parseNum(parts[1]);
+      if (!Number.isFinite(depth) || !Number.isFinite(value)) return;
+      rows.push({ depthTvd: depth, value });
+    });
+    rows.sort((a, b) => a.depthTvd - b.depthTvd);
+    return rows;
+  }
+
+  function activeCasingWell() {
+    if (!state.wells.length) return null;
+    let w = state.wells.find((item) => item.id === state.activeWellId);
+    if (!w) {
+      w = state.wells[0];
+      state.activeWellId = w.id;
+    }
+    return w;
+  }
+
+  function visibleWellsForView() {
+    if (state.viewMode === "multi") return state.wells.slice();
+    if (state.viewMode === "selected") return state.wells.filter((w) => w.selected !== false);
+    const w = activeCasingWell();
+    return w ? [w] : [];
+  }
+
+  function setCasingViewMode(mode) {
+    state.viewMode = mode === "selected" || mode === "multi" ? mode : "one";
+    ["one", "selected", "multi"].forEach((m) => {
+      const btn = document.getElementById("csg-view-" + m);
+      if (btn) btn.setAttribute("aria-pressed", state.viewMode === m ? "true" : "false");
+    });
+    const ppfgWrap = document.getElementById("csg-ppfg-wrap");
+    if (ppfgWrap) ppfgWrap.style.opacity = state.viewMode === "one" ? "1" : "0.5";
+    // In single mode, ensure an active well exists
+    if (state.viewMode === "one" && !state.activeWellId && state.wells[0]) {
+      state.activeWellId = state.wells[0].id;
+    }
+    persist();
+    renderWells();
+    renderPpfgPreview();
+    requestDraw();
+  }
+
+  function applyPpfgToActive(kind, text) {
+    const w = activeCasingWell();
+    if (!w) {
+      setStatus("Tidak ada sumur aktif.");
+      return;
+    }
+    const rows = parseDepthValuePairs(text);
+    if (kind === "pp") w.pp = rows;
+    else w.fg = rows;
+    const status = document.getElementById("csg-ppfg-status");
+    if (status) status.textContent = (kind === "pp" ? "PP" : "FG") + ": " + rows.length + " titik dimuat ke " + (w.name || "sumur") + ".";
+    persist();
+    renderPpfgPreview();
+    requestDraw();
+  }
+
+  function renderPpfgPreview() {
+    const host = document.getElementById("csg-ppfg-preview");
+    if (!host) return;
+    const w = activeCasingWell();
+    if (!w) {
+      host.textContent = "";
+      return;
+    }
+    const pp = Array.isArray(w.pp) ? w.pp : [];
+    const fg = Array.isArray(w.fg) ? w.fg : [];
+    host.innerHTML = "<strong>" + esc(w.name || "Sumur") + "</strong> — PP: " + pp.length + " titik, FG: " + fg.length + " titik.";
   }
 
   function blankFormation() {
@@ -1272,14 +1434,14 @@
       tvdMax: 7000,
       endLabel: "End of Well",
       formations: [
-        layer("Pre Parigi", 0, 1450, "#7A3412"),
-        layer("Parigi Top", 1450, 1850, "#2F9E3A"),
-        layer("Main Fm", 1850, 2450, "#3F3F3F"),
-        layer("Massive Fm", 2450, 3200, "#E4F5D6"),
-        layer("Baturaja Stringers", 3200, 3900, "#00D0E6"),
-        layer("Baturaja Massive Fm", 3900, 4700, "#0E3A48"),
-        layer("BRF Base", 4700, 6100, "#1A73C9"),
-        layer("NMTA Fm", 6100, 7000, "#F0B429")
+        layer("Pre Parigi", 0, 1450, FM_COLORS[0]),
+        layer("Parigi Top", 1450, 1850, FM_COLORS[1]),
+        layer("Main Fm", 1850, 2450, FM_COLORS[2]),
+        layer("Massive Fm", 2450, 3200, FM_COLORS[3]),
+        layer("Baturaja Stringers", 3200, 3900, FM_COLORS[4]),
+        layer("Baturaja Massive Fm", 3900, 4700, FM_COLORS[5]),
+        layer("BRF Base", 4700, 6100, FM_COLORS[6]),
+        layer("NMTA Fm", 6100, 7000, FM_COLORS[7])
       ],
       wells: [
         makeWell("OOA-1", 7739, 6953.25, [
@@ -1320,6 +1482,18 @@
     state.endLabel = data.endLabel || "End of Well";
     state.formations = data.formations || [];
     state.wells = data.wells || [];
+    state.viewMode = data.viewMode === "selected" || data.viewMode === "multi" ? data.viewMode : "one";
+    state.activeWellId = data.activeWellId || (state.wells[0] && state.wells[0].id) || "";
+    state.showPpfg = !!data.showPpfg;
+    state.wells.forEach((w, index) => {
+      if (!Array.isArray(w.pp)) w.pp = [];
+      if (!Array.isArray(w.fg)) w.fg = [];
+      if (w.selected == null) w.selected = true;
+      if (!w.id) w.id = uid();
+    });
+    if (state.activeWellId && !state.wells.some((w) => w.id === state.activeWellId) && state.wells[0]) {
+      state.activeWellId = state.wells[0].id;
+    }
   }
 
   function applyChrome() {
@@ -1333,6 +1507,15 @@
     if (decimal) decimal.value = state.decimalComma ? "comma" : "dot";
     if (max) max.value = numToInput(state.tvdMax);
     if (endLabel) endLabel.value = state.endLabel;
+    ["one", "selected", "multi"].forEach((m) => {
+      const btn = document.getElementById("csg-view-" + m);
+      if (btn) btn.setAttribute("aria-pressed", state.viewMode === m ? "true" : "false");
+    });
+    const showPpfg = document.getElementById("csg-show-ppfg");
+    if (showPpfg) showPpfg.checked = !!state.showPpfg;
+    const ppfgWrap = document.getElementById("csg-ppfg-wrap");
+    if (ppfgWrap) ppfgWrap.style.opacity = state.viewMode === "one" ? "1" : "0.5";
+    renderPpfgPreview();
   }
 
   function persist() {
@@ -1396,8 +1579,14 @@
         color: wellColor(well.color, index),
         tdMd: numberOrNull(well.tdMd),
         tdTvd: numberOrNull(well.tdTvd),
-        casings: Array.isArray(well.casings) ? well.casings.map(normalizeCasing) : []
-      }))
+        casings: Array.isArray(well.casings) ? well.casings.map(normalizeCasing) : [],
+        selected: well.selected !== false,
+        pp: Array.isArray(well.pp) ? well.pp.map((p) => ({ depthTvd: numberOrNull(p.depthTvd), value: numberOrNull(p.value) })).filter((p) => p.depthTvd != null && p.value != null) : [],
+        fg: Array.isArray(well.fg) ? well.fg.map((p) => ({ depthTvd: numberOrNull(p.depthTvd), value: numberOrNull(p.value) })).filter((p) => p.depthTvd != null && p.value != null) : []
+      })),
+      viewMode: data.viewMode,
+      activeWellId: data.activeWellId,
+      showPpfg: data.showPpfg
     });
     return true;
   }
@@ -1420,7 +1609,10 @@
       tvdMax: state.tvdMax,
       endLabel: state.endLabel,
       formations: state.formations,
-      wells: state.wells
+      wells: state.wells,
+      viewMode: state.viewMode,
+      activeWellId: state.activeWellId,
+      showPpfg: !!state.showPpfg
     };
   }
 
@@ -1465,7 +1657,9 @@
       azimuth: { panel: "panel-azimuth", actions: "actions-azimuth", tab: "tab-azimuth", title: "Chart Azimuth & Inklinasi" },
       casing: { panel: "panel-casing", actions: "actions-casing", tab: "tab-casing", title: "Casing Setting Depth" },
       drilling: { panel: "panel-drilling", actions: "actions-drilling", tab: "tab-drilling", title: "Drilling Summary" },
-      boxplot: { panel: "panel-boxplot", actions: "actions-boxplot", tab: "tab-boxplot", title: "Box & Whisker" }
+      boxplot: { panel: "panel-boxplot", actions: "actions-boxplot", tab: "tab-boxplot", title: "Box & Whisker" },
+      ai: { panel: "panel-ai", actions: "actions-ai", tab: "tab-ai", title: "AI Suggestion" },
+      automl: { panel: "panel-automl", actions: "actions-automl", tab: "tab-automl", title: "AutoML" }
     };
     const active = names[tab] ? tab : "azimuth";
     Object.keys(names).forEach((key) => {
@@ -1492,6 +1686,10 @@
     document.getElementById("tab-casing").addEventListener("click", () => activate("casing"));
     document.getElementById("tab-drilling").addEventListener("click", () => activate("drilling"));
     document.getElementById("tab-boxplot").addEventListener("click", () => activate("boxplot"));
+    const tabAi = document.getElementById("tab-ai");
+    if (tabAi) tabAi.addEventListener("click", () => activate("ai"));
+    const tabAm = document.getElementById("tab-automl");
+    if (tabAm) tabAm.addEventListener("click", () => activate("automl"));
     document.getElementById("csg-formations").addEventListener("input", onField);
     document.getElementById("csg-formations").addEventListener("click", onClick);
     document.getElementById("csg-wells").addEventListener("input", onField);
@@ -1518,13 +1716,76 @@
     document.getElementById("csg-add-well").addEventListener("click", () => {
       const created = blankWell(state.wells.length + 1);
       state.wells.push(created);
+      state.activeWellId = created.id;
       openWells.add(created.id);
       focusAfter = { well: created.id, field: "wellName" };
       persist();
       renderWells();
+      renderPpfgPreview();
       focusPending();
       requestDraw();
     });
+    const bindView = (id, mode) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("click", () => setCasingViewMode(mode));
+    };
+    bindView("csg-view-one", "one");
+    bindView("csg-view-selected", "selected");
+    bindView("csg-view-multi", "multi");
+    const showPpfg = document.getElementById("csg-show-ppfg");
+    if (showPpfg) showPpfg.addEventListener("change", () => {
+      state.showPpfg = !!showPpfg.checked;
+      persist();
+      requestDraw();
+    });
+    const ppApply = document.getElementById("csg-pp-apply");
+    if (ppApply) ppApply.addEventListener("click", () => applyPpfgToActive("pp", document.getElementById("csg-pp-paste").value));
+    const fgApply = document.getElementById("csg-fg-apply");
+    if (fgApply) fgApply.addEventListener("click", () => applyPpfgToActive("fg", document.getElementById("csg-fg-paste").value));
+    const wireFile = (inputId, kind) => {
+      const input = document.getElementById(inputId);
+      if (!input) return;
+      input.addEventListener("change", async () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        const text = await file.text();
+        applyPpfgToActive(kind, text);
+        input.value = "";
+      });
+    };
+    wireFile("csg-pp-file", "pp");
+    wireFile("csg-fg-file", "fg");
+    const wellsHost = document.getElementById("csg-wells");
+    if (wellsHost) {
+      wellsHost.addEventListener("click", (event) => {
+        const act = event.target.closest("[data-well-activate]");
+        if (act) {
+          event.preventDefault();
+          event.stopPropagation();
+          state.activeWellId = act.getAttribute("data-well-activate");
+          if (state.viewMode !== "one") {
+            // help user: switch to single mode when choosing active
+            // keep current mode; only set active
+          }
+          persist();
+          renderWells();
+          renderPpfgPreview();
+          requestDraw();
+          setStatus("Sumur aktif: " + ((state.wells.find((w) => w.id === state.activeWellId) || {}).name || ""));
+        }
+      });
+      wellsHost.addEventListener("change", (event) => {
+        const input = event.target;
+        if (!input || !input.getAttribute) return;
+        const id = input.getAttribute("data-well-selected");
+        if (!id) return;
+        const w = state.wells.find((item) => item.id === id);
+        if (!w) return;
+        w.selected = !!input.checked;
+        persist();
+        requestDraw();
+      });
+    }
     document.getElementById("csg-sample").addEventListener("click", loadSample);
     document.getElementById("csg-clear").addEventListener("click", clearAll);
 

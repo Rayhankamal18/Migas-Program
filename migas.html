@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gambar Sumur</title>
+  <link rel="stylesheet" href="shared/styles.css?v=20261102a" />
+  <link rel="stylesheet" href="azimuth/azimuth.css?v=20261102a" />
+  <link rel="stylesheet" href="casing/casing.css?v=20261102a" />
+  <link rel="stylesheet" href="drilling/drilling.css?v=20261102a" />
+  <link rel="stylesheet" href="boxplot/boxplot.css?v=20261102a" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1 id="app-title">Chart Azimuth &amp; Inklinasi</h1>
+      <nav class="tabs" role="tablist" aria-label="Fitur">
+        <button type="button" class="tab" id="tab-azimuth" role="tab" aria-selected="true" aria-controls="panel-azimuth">Azimuth Polar Chart</button>
+        <button type="button" class="tab" id="tab-casing" role="tab" aria-selected="false" aria-controls="panel-casing">Casing Setting Depth</button>
+        <button type="button" class="tab" id="tab-drilling" role="tab" aria-selected="false" aria-controls="panel-drilling">Drilling Summary</button>
+        <button type="button" class="tab" id="tab-boxplot" role="tab" aria-selected="false" aria-controls="panel-boxplot">Box &amp; Whisker</button>
+        <button type="button" class="tab" id="tab-ai" role="tab" aria-selected="false" aria-controls="panel-ai">AI Suggestion</button>
+        <button type="button" class="tab" id="tab-automl" role="tab" aria-selected="false" aria-controls="panel-automl">AutoML</button>
+      </nav>
+    </div>
+    <div class="top-actions-wrap">
+      <div class="top-actions">
+        <button type="button" class="btn ghost" id="btn-open-project">Buka</button>
+        <button type="button" class="btn" id="btn-save-project">Simpan</button>
+        <button type="button" class="btn ghost" id="btn-storage" title="Save / Load">Save / Load</button>
+        <button type="button" class="btn ghost" id="btn-settings" title="Settings">⚙ Settings</button>
+        <span class="micro" id="project-status-line" style="margin-left:8px"></span>
+        <input id="project-file" type="file" accept=".json,application/json" hidden />
+      </div>
+      <div class="top-actions" id="actions-azimuth">
+      <button type="button" class="btn ghost" id="btn-png">PNG</button>
+      <button type="button" class="btn ghost" id="btn-jpg">JPG</button>
+      <button type="button" class="btn" id="btn-pdf">Unduh PDF</button>
+    </div>
+    <div class="top-actions" id="actions-casing" hidden>
+      <button type="button" class="btn ghost" id="csg-png">PNG</button>
+      <button type="button" class="btn ghost" id="csg-jpg">JPG</button>
+      <button type="button" class="btn" id="csg-pdf">Unduh PDF</button>
+    </div>
+    <div class="top-actions" id="actions-drilling" hidden>
+      <button type="button" class="btn ghost" id="ds-png">PNG</button>
+      <button type="button" class="btn ghost" id="ds-jpg">JPG</button>
+      <button type="button" class="btn" id="ds-pdf">Unduh PDF</button>
+    </div>
+    <div class="top-actions" id="actions-ai" hidden></div>
+    <div class="top-actions" id="actions-automl" hidden></div>
+      <div class="top-actions" id="actions-boxplot" hidden>
+      <button type="button" class="btn ghost" id="bx-png">PNG</button>
+      <button type="button" class="btn ghost" id="bx-jpg">JPG</button>
+      <button type="button" class="btn" id="bx-pdf">Unduh PDF</button>
+    </div>
+    </div>
+  </header>
+
+  <div class="layout" id="panel-azimuth" role="tabpanel">
+    <aside class="panel">
+      <section>
+        <h2>Data</h2>
+        <label class="dropzone" id="dropzone">
+          <input id="file" type="file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" />
+          <strong>Unggah Excel</strong>
+          <span>.xlsx, .xls, atau .csv</span>
+        </label>
+        <div class="row-actions">
+          <button type="button" class="btn ghost" id="btn-template">Template</button>
+          <button type="button" class="btn ghost" id="btn-manual">Atur kolom</button>
+        </div>
+
+        <div id="mapper" hidden>
+          <h3>Pilih kolom</h3>
+          <label>Lembar
+            <select id="map-sheet"></select>
+          </label>
+          <label>Baris header
+            <input id="map-header-row" type="number" min="1" step="1" value="1" />
+          </label>
+          <label>Sumur
+            <select id="map-well"></select>
+          </label>
+          <label>Azimuth awal
+            <select id="map-az-awal"></select>
+          </label>
+          <label>Azimuth akhir
+            <select id="map-az-akhir"></select>
+          </label>
+          <label>Inklinasi awal
+            <select id="map-inc-awal"></select>
+          </label>
+          <label>Inklinasi akhir
+            <select id="map-inc-akhir"></select>
+          </label>
+          <label>Formasi (opsional)
+            <select id="map-formation"></select>
+          </label>
+          <label>Nama formasi jika tidak ada kolom
+            <input id="map-formation-name" type="text" placeholder="Misalnya Parigi Top" />
+          </label>
+          <button type="button" class="btn" id="map-apply">Gunakan kolom ini</button>
+          <div id="map-preview" class="preview"></div>
+        </div>
+        <details class="fold">
+          <summary>Contoh data</summary>
+          <div class="row-actions">
+            <button type="button" class="btn ghost" id="btn-sample-parigi">Parigi Top</button>
+            <button type="button" class="btn ghost" id="btn-sample-wpa">WPA &amp; UPA</button>
+          </div>
+        </details>
+        <p class="status" id="status" role="status"></p>
+      </section>
+
+      <section>
+        <h2>Gambar</h2>
+        <div class="feature-box">
+          <h3 class="feature-title">Formasi</h3>
+          <p class="micro">Satu formasi = satu set data sumur. Ganti formasi di daftar untuk melihat data lain tanpa menghapus.</p>
+          <label>Formasi aktif
+            <select id="formation-select"></select>
+          </label>
+          <label>Nama formasi
+            <input id="formation-name" type="text" spellcheck="false" placeholder="Parigi Top" />
+          </label>
+          <div class="row-actions">
+            <button type="button" class="btn" id="btn-add-formation">+ Formasi baru</button>
+            <button type="button" class="btn ghost" id="btn-del-formation">Hapus formasi ini</button>
+          </div>
+          <div id="formation-select-wrap" hidden></div>
+        </div>
+        <label>Keterangan
+          <textarea id="caption" rows="2" spellcheck="true"></textarea>
+        </label>
+      </section>
+
+      <section>
+        <h2>Sumur</h2>
+        <p class="micro" id="visible-count" hidden></p>
+        <div id="wells"></div>
+        <button type="button" class="btn ghost wide" id="btn-add-well">Tambah sumur</button>
+        <details class="fold">
+          <summary>Tempel dari Excel</summary>
+          <label>Tempel sebagai
+            <select id="paste-target">
+              <option value="azimuth">Azimuth awal dan akhir</option>
+              <option value="inclination">Inklinasi awal dan akhir</option>
+            </select>
+          </label>
+          <label class="sr" for="paste-box">Nilai awal dan akhir</label>
+          <textarea id="paste-box" rows="4" spellcheck="false" placeholder="236,16&#9;240,85"></textarea>
+          <button type="button" class="btn ghost wide" id="btn-paste">Terapkan</button>
+        </details>
+      </section>
+
+      <details class="fold settings">
+        <summary>Pengaturan gambar</summary>
+        <label>Arah busur
+          <select id="arc-mode">
+            <option value="short">Terpendek</option>
+            <option value="cw">Searah jarum jam</option>
+            <option value="ccw">Berlawanan jarum jam</option>
+          </select>
+        </label>
+        <div class="split">
+          <label>Inklinasi min
+            <input id="inc-min" type="number" min="0" max="180" step="any" placeholder="0" />
+          </label>
+          <label>Inklinasi maks
+            <input id="inc-max" type="number" min="0" max="180" step="any" placeholder="Otomatis" />
+          </label>
+        </div>
+        <label>Grid
+          <select id="inc-step">
+            <option value="5">5°</option>
+            <option value="10">10°</option>
+          </select>
+        </label>
+        <p class="micro" id="scale-note"></p>
+        <label>Garis <span id="stroke-width-value">1.8</span>
+          <input id="stroke-width" type="range" min="0.5" max="5" step="0.1" value="1.8" />
+        </label>
+        <label>Isian <span id="fill-opacity-value">0%</span>
+          <input id="fill-opacity" type="range" min="0" max="0.7" step="0.02" value="0" />
+        </label>
+        <label>Pola legenda
+          <input id="legend-template" type="text" spellcheck="false" />
+        </label>
+        <label>Desimal
+          <select id="decimal-comma">
+            <option value="dot">Titik (28.75)</option>
+            <option value="comma">Koma (28,75)</option>
+          </select>
+        </label>
+        <div class="row-actions">
+          <button type="button" class="btn ghost" id="btn-legend-reset">Legenda dari data</button>
+          <button type="button" class="btn ghost" id="btn-recolor">Warna ulang</button>
+        </div>
+        <label class="check-line" id="pdf-all-wrap">
+          <input id="pdf-all" type="checkbox" checked />
+          PDF satu halaman per formasi
+        </label>
+      </details>
+    </aside>
+
+    <main>
+      <div class="stage" id="stage">
+        <div class="zoom-bar" title="Seret gambar untuk menggeser. Tombol Area, atau Shift+seret, memilih bagian yang diperbesar.">
+          <button type="button" class="btn ghost zoom-btn" id="btn-zoom-out" aria-label="Perkecil gambar">−</button>
+          <span id="zoom-label">100%</span>
+          <button type="button" class="btn ghost zoom-btn" id="btn-zoom-in" aria-label="Perbesar gambar">+</button>
+          <button type="button" class="btn ghost zoom-btn" id="btn-zoom-area" aria-pressed="false" title="Seret pada gambar untuk memperbesar area itu">Area</button>
+          <button type="button" class="btn ghost zoom-btn" id="btn-zoom-reset">Sesuai</button>
+        </div>
+        <div class="sheet" id="sheet">
+          <canvas id="chart" aria-label="Chart polar azimuth dan inklinasi"></canvas>
+          <div id="zoom-labels"></div>
+          <div id="marquee" hidden></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="layout wide" id="panel-casing" role="tabpanel" hidden>
+    <aside class="panel">
+      <section class="feature-box">
+        <h2>Tampilan sumur di gambar</h2>
+        <p class="micro"><b>Satu sumur</b> = hanya sumur aktif. <b>Terpilih</b> = yang dicentang. <b>Semua</b> = seluruh sumur.</p>
+        <div class="seg-control" role="group" aria-label="Mode tampilan casing">
+          <button type="button" class="seg-btn" id="csg-view-one" aria-pressed="true">Satu sumur</button>
+          <button type="button" class="seg-btn" id="csg-view-selected" aria-pressed="false">Terpilih</button>
+          <button type="button" class="seg-btn" id="csg-view-multi" aria-pressed="false">Semua</button>
+        </div>
+        <label class="check-line" id="csg-ppfg-wrap">
+          <input id="csg-show-ppfg" type="checkbox" />
+          Tampilkan kurva PP/FG (hanya mode Satu sumur)
+        </label>
+      </section>
+      <section>
+        <h2>Gambar</h2>
+        <label>Judul
+          <input id="csg-title" type="text" spellcheck="false" placeholder="Opsional, tampil di atas gambar" />
+        </label>
+        <div class="split">
+          <label>Satuan
+            <select id="csg-unit">
+              <option value="ft">ft</option>
+              <option value="m">m</option>
+            </select>
+          </label>
+          <label>Angka
+            <select id="csg-decimal">
+              <option value="comma">1.712,88</option>
+              <option value="dot">1,712.88</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <details class="fold" id="csg-fm-fold">
+        <summary>Formasi <span class="count" id="csg-fm-count"></span></summary>
+        <p class="micro">Kolom warna di kiri gambar. Lewati jika tidak ada data formasi.</p>
+        <div id="csg-formations"></div>
+        <button type="button" class="btn ghost wide" id="csg-add-fm">Tambah formasi</button>
+      </details>
+
+      <section>
+        <h2>Sumur</h2>
+        <p class="micro">Isi MD shoe dan TVD shoe. Casing selalu digambar dari 0 TVD. Kosongkan Top of liner bila belum ada data: liner digambar lebih tinggi supaya sambungannya dengan casing terdalam terlihat jelas. Isi Top of liner untuk memakai kedalaman TVD yang pasti. Warna sumur mengelompokkan jenis sumur di header gambar; sumur berurutan dengan warna sama digabung. Garis biasa untuk casing, putus-putus untuk open hole atau liner perforated.</p>
+        <div class="row-actions">
+          <button type="button" class="btn ghost" id="csg-sample">Muat contoh</button>
+          <button type="button" class="btn ghost" id="csg-clear">Kosongkan</button>
+        </div>
+        <div id="csg-wells"></div>
+        <button type="button" class="btn ghost wide" id="csg-add-well">Tambah sumur</button>
+        <p class="status" id="csg-status" role="status"></p>
+      </section>
+      <section id="csg-ppfg-section">
+        <h2>PP / FG sumur aktif</h2>
+        <p class="micro">Data per sumur. Format: depth TVD (ft), nilai (ppg). Tempel dari Excel atau unggah CSV (koma).</p>
+        <label>Tempel PP (depth_TVD_ft, PP_ppg)
+          <textarea id="csg-pp-paste" rows="4" spellcheck="false" placeholder="1000, 9.2&#10;2000, 9.8"></textarea>
+        </label>
+        <div class="row-actions">
+          <button type="button" class="btn ghost" id="csg-pp-apply">Terapkan PP</button>
+          <label class="btn ghost" style="display:inline-block;cursor:pointer">Unggah CSV PP
+            <input id="csg-pp-file" type="file" accept=".csv,text/csv" hidden />
+          </label>
+        </div>
+        <label>Tempel FG (depth_TVD_ft, FG_ppg)
+          <textarea id="csg-fg-paste" rows="4" spellcheck="false" placeholder="1000, 12.5&#10;2000, 13.1"></textarea>
+        </label>
+        <div class="row-actions">
+          <button type="button" class="btn ghost" id="csg-fg-apply">Terapkan FG</button>
+          <label class="btn ghost" style="display:inline-block;cursor:pointer">Unggah CSV FG
+            <input id="csg-fg-file" type="file" accept=".csv,text/csv" hidden />
+          </label>
+        </div>
+        <p class="status" id="csg-ppfg-status" role="status"></p>
+        <div id="csg-ppfg-preview" class="micro"></div>
+      </section>
+
+      <details class="fold settings">
+        <summary>Pengaturan gambar</summary>
+        <label>TVD maksimum
+          <input id="csg-max" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Otomatis" />
+        </label>
+        <label>Teks akhir sumur
+          <input id="csg-end-label" type="text" spellcheck="false" />
+        </label>
+        <p class="micro" id="csg-max-hint">Skala kosong mengikuti data terdalam. Teks akhir muncul di kedalaman TD.</p>
+      </details>
+    </aside>
+
+    <main>
+      <div class="stage">
+        <div class="csg-toolbar">
+          <span class="micro">Pratinjau</span>
+          <div class="zoom-bar" title="Seret gambar dengan klik kiri untuk menggeser. Gulir untuk memperbesar atau memperkecil.">
+            <button type="button" class="btn ghost zoom-btn" id="csg-zoom-out" aria-label="Perkecil gambar">−</button>
+            <span id="csg-zoom-label">100%</span>
+            <button type="button" class="btn ghost zoom-btn" id="csg-zoom-in" aria-label="Perbesar gambar">+</button>
+            <button type="button" class="btn ghost zoom-btn" id="csg-zoom-fit">Sesuai</button>
+          </div>
+        </div>
+        <div class="sheet" id="csg-sheet">
+          <canvas id="csg-chart" aria-label="Skema casing setting depth"></canvas>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="layout wide ds-layout" id="panel-drilling" role="tabpanel" hidden>
+    <aside class="panel">
+      <section>
+        <h2>Sumur drilling <span class="count" id="ds-well-count"></span></h2>
+        <p class="micro">Setiap sumur punya data progress &amp; masalah sendiri. Pilih sumur untuk mengedit, atau mode Bandingkan untuk menumpuk semua kurva.</p>
+        <div id="ds-wells" class="ds-wells"></div>
+        <div class="row-actions" style="margin-top:8px">
+          <button type="button" class="btn ghost" id="ds-add-well">Tambah sumur</button>
+          <button type="button" class="btn ghost" id="ds-dup-well">Duplikat</button>
+        </div>
+        <div class="ds-view-mode" style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+          <button type="button" class="btn ghost" id="ds-view-single" aria-pressed="true">Satu sumur</button>
+          <button type="button" class="btn ghost" id="ds-view-compare" aria-pressed="false">Bandingkan semua</button>
+        </div>
+      </section>
+      <section>
+        <h2>Gambar</h2>
+        <label>Judul
+          <input id="ds-title" type="text" spellcheck="false" autocomplete="off" placeholder="Time vs Depth" />
+        </label>
+        <label>Nama sumur aktif
+          <input id="ds-well" type="text" spellcheck="false" autocomplete="off" placeholder="OOA-3" />
+        </label>
+        <label>Keterangan
+          <input id="ds-subtitle" type="text" spellcheck="false" autocomplete="off" placeholder="Perusahaan, rig, atau periode" />
+        </label>
+        <label>TD (ft-MD)
+          <input id="ds-td" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Otomatis" />
+        </label>
+        <label>TD (ft-TVD)
+          <input id="ds-td-tvd" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Otomatis" />
+        </label>
+        <label>Angka
+          <select id="ds-decimal">
+            <option value="comma">1.712,88</option>
+            <option value="dot">1,712.88</option>
+          </select>
+        </label>
+      </section>
+
+      <section>
+        <h2>Casing</h2>
+        <label class="check-line">
+          <input id="ds-show-casing" type="checkbox" checked />
+          Tampilkan di grafik
+        </label>
+        <label>Sumur
+          <select id="ds-casing-well">
+            <option value="">Tidak ditampilkan</option>
+          </select>
+        </label>
+        <p class="micro">Gambar casing diambil dari sumur yang sudah diisi di Casing Setting Depth, lalu diletakkan di kiri grafik. Memilih sumur juga mengisi TD ft-MD dan TD ft-TVD dari data sumur itu.</p>
+      </section>
+
+      <section>
+        <h2>Formasi <span class="count" id="ds-fm-count"></span></h2>
+        <label class="check-line">
+          <input id="ds-show-fm" type="checkbox" checked />
+          Tampilkan di grafik
+        </label>
+        <p class="micro">Kolom di kiri gambar casing. Salin dari Excel: nama formasi, lalu baris Top dan Bottom dengan ft-MD dan ft-TVD. Atas kosong berarti mulai dari permukaan.</p>
+        <textarea id="ds-fm-paste" rows="6" spellcheck="false" placeholder="Formasi&#9;ft-MD&#9;ft-TVD&#10;Pre Parigi&#10;Top&#9;0&#9;0&#10;Bottom&#9;1842&#9;1700"></textarea>
+        <button type="button" class="btn ghost wide" id="ds-fm-paste-apply">Tempel formasi</button>
+        <div id="ds-formations"></div>
+        <button type="button" class="btn ghost wide" id="ds-add-fm">Tambah formasi</button>
+      </section>
+
+      <section>
+        <h2>Hari dan kedalaman <span class="count" id="ds-progress-count"></span></h2>
+        <p class="micro">Titik garis kedalaman. Saat mengebor, kedalaman bertambah. Saat diam, kedalaman tetap. Salin tiga kolom Day, ft-MD, dan ft-TVD dari Excel, lalu tempel di kotak bawah.</p>
+        <textarea id="ds-paste" rows="4" spellcheck="false" placeholder="Day&#9;ft-MD&#9;ft-TVD&#10;1&#9;0&#9;0&#10;11&#9;366&#9;300"></textarea>
+        <button type="button" class="btn ghost wide" id="ds-paste-apply">Tempel ke kedalaman</button>
+        <div id="ds-progress"></div>
+        <button type="button" class="btn ghost wide" id="ds-add-progress">Tambah hari</button>
+      </section>
+
+      <section>
+        <div class="row-actions">
+          <button type="button" class="btn ghost" id="ds-sample">Muat contoh</button>
+          <button type="button" class="btn ghost" id="ds-clear">Kosongkan</button>
+        </div>
+        <p class="status" id="ds-status" role="status"></p>
+      </section>
+    </aside>
+
+    <main>
+      <div class="stage">
+        <div class="csg-toolbar ds-toolbar">
+          <button type="button" class="ds-spread" id="ds-spread" aria-pressed="false">Analisa persebaran</button>
+          <button type="button" class="ds-spread-reset" id="ds-spread-reset" hidden>Reset urutan</button>
+          <div class="ds-toolbar-right">
+            <span class="micro">Pratinjau</span>
+            <div class="zoom-bar" title="Seret gambar dengan klik kiri untuk menggeser. Gulir untuk memperbesar atau memperkecil.">
+              <button type="button" class="btn ghost zoom-btn" id="ds-zoom-out" aria-label="Perkecil gambar">−</button>
+              <span id="ds-zoom-label">100%</span>
+              <button type="button" class="btn ghost zoom-btn" id="ds-zoom-in" aria-label="Perbesar gambar">+</button>
+              <button type="button" class="btn ghost zoom-btn" id="ds-zoom-fit">Sesuai</button>
+            </div>
+            <div class="ds-mode" role="group" aria-label="Mode kedalaman grafik">
+              <button type="button" id="ds-mode-md" aria-pressed="true">ft-MD</button>
+              <button type="button" id="ds-mode-tvd" aria-pressed="false">ft-TVD</button>
+            </div>
+          </div>
+        </div>
+        <div class="sheet" id="ds-sheet">
+          <canvas id="ds-chart" aria-label="Drilling summary, waktu terhadap kedalaman"></canvas>
+        </div>
+        <div class="ds-legend-panel" id="ds-legend-panel" hidden>
+          <div class="ds-legend-head">
+            <p class="ds-legend-count" id="ds-legend-count"></p>
+            <div class="ds-filter" id="ds-filter" hidden>
+              <button type="button" class="ds-filter-btn" id="ds-filter-btn" aria-expanded="false" aria-haspopup="true" aria-pressed="false">Filter</button>
+              <div class="ds-filter-pop" id="ds-filter-pop" hidden>
+                <label><input type="radio" name="ds-spread-sort" value="" checked /> Tidak sama sekali</label>
+                <label><input type="radio" name="ds-spread-sort" value="desc" /> Besar ke kecil</label>
+                <label><input type="radio" name="ds-spread-sort" value="asc" /> Kecil ke besar</label>
+              </div>
+            </div>
+          </div>
+          <p class="micro" id="ds-legend-note">Angka ini di luar grafik dan tidak ikut terunduh. Garis kedalaman tidak dihitung sebagai masalah.</p>
+          <div class="ds-legend-switches" id="ds-legend-switches" role="group" aria-label="Tampilkan keterangan di grafik"></div>
+        </div>
+      </div>
+      <section class="ds-below">
+        <div class="ds-axis-row">
+          <label class="ds-end-field">Hari selesai pengerjaan sumur
+            <input id="ds-end" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Otomatis" />
+          </label>
+          <label>Angka sumbu hari
+            <select id="ds-day-mode">
+              <option value="interval">Interval</option>
+              <option value="all">Semua hari</option>
+            </select>
+          </label>
+          <label id="ds-day-step-wrap">Interval (hari)
+            <input id="ds-day-step" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Otomatis" />
+          </label>
+        </div>
+        <p class="micro">Interval mengatur jarak angka hari. Semua hari menampilkan setiap angka dari 1 sampai hari selesai. Tulisan Day hanya sekali, di tengah grafik sumur.</p>
+        <h2>Masalah sumur <span class="count" id="ds-event-count"></span></h2>
+        <label class="ds-symbol-field">Ukuran simbol
+          <input id="ds-symbol" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="9" />
+        </label>
+        <p class="micro">Klik kolom Day, lalu tempel dari Excel. Setiap baris yang disalin menjadi satu masalah, urutannya Day, ft-MD, lalu ft-TVD. Kategori dipilih sendiri. Untuk beberapa baris sekaligus, centang atau seret kotak di kiri, lalu terapkan kategori atau hapus yang dipilih. Ukuran simbol mengatur besar penanda di grafik.</p>
+        <div class="ds-bulk">
+          <p class="micro" id="ds-bulk-count">Belum ada masalah dipilih.</p>
+          <label>Kategori untuk yang dipilih
+            <select id="ds-bulk-category"></select>
+          </label>
+          <button type="button" class="btn" id="ds-bulk-apply" disabled>Terapkan</button>
+          <button type="button" class="btn ghost" id="ds-bulk-delete" disabled>Hapus dipilih</button>
+        </div>
+        <div id="ds-events"></div>
+        <button type="button" class="btn ghost" id="ds-add-event">Tambah masalah</button>
+      </section>
+    </main>
+  </div>
+
+  <div class="layout wide bx-layout" id="panel-boxplot" role="tabpanel" hidden>
+    <aside class="panel">
+      <section class="feature-box">
+        <h2>Plots <span class="count" id="bx-plot-count"></span></h2>
+        <p class="micro">Add plots without deleting existing ones. Click a plot to edit it.</p>
+        <div id="bx-plot-list" class="bx-plot-list"></div>
+        <label>Active plot name
+          <input id="bx-plot-name" type="text" spellcheck="false" placeholder="Plot 1" />
+        </label>
+        <button type="button" class="btn" id="bx-add-plot">Add new plot</button>
+      </section>
+      <section>
+        <h2>Chart</h2>
+        <label>Judul
+          <input id="bx-title" type="text" spellcheck="false" autocomplete="off" />
+        </label>
+        <label>Sumbu Y
+          <input id="bx-ylabel" type="text" spellcheck="false" autocomplete="off" />
+        </label>
+        <label>Sumbu X
+          <input id="bx-xlabel" type="text" spellcheck="false" autocomplete="off" />
+        </label>
+        <label>Angka
+          <select id="bx-decimal">
+            <option value="comma">9,5</option>
+            <option value="dot">9.5</option>
+          </select>
+        </label>
+        <div class="split">
+          <label>Y minimum
+            <input id="bx-ymin" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Otomatis" />
+          </label>
+          <label>Y maksimum
+            <input id="bx-ymax" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Otomatis" />
+          </label>
+        </div>
+      </section>
+      <section id="bx-toggles">
+        <h2>Tampilkan</h2>
+        <p class="micro">Setiap bagian gambar bisa dimatikan sendiri. Keterangan hanya menyembunyikan tulisan di bawah grafik, tanpa mengubah tanda yang masih menyala. Angka di bawahnya menyala satu per satu, per kolom.</p>
+        <div class="bx-checks">
+          <label class="bx-check"><input id="bx-show-box" data-group="show" data-flag="box" type="checkbox" checked /> Kotak Q1–Q3</label>
+          <label class="bx-check"><input id="bx-show-median" data-group="show" data-flag="median" type="checkbox" checked /> Garis median</label>
+          <label class="bx-check"><input id="bx-show-mean" data-group="show" data-flag="mean" type="checkbox" checked /> Tanda mean</label>
+          <label class="bx-check"><input id="bx-show-whisker" data-group="show" data-flag="whisker" type="checkbox" checked /> Whisker</label>
+          <label class="bx-check"><input id="bx-show-outlier" data-group="show" data-flag="outlier" type="checkbox" checked /> Outlier</label>
+          <label class="bx-check"><input id="bx-show-legend" data-group="show" data-flag="legend" type="checkbox" checked /> Keterangan</label>
+        </div>
+        <h2>Angka per kolom</h2>
+        <div class="bx-checks">
+          <label class="bx-check"><input id="bx-num-min" data-group="numbers" data-flag="min" type="checkbox" /> Min</label>
+          <label class="bx-check"><input id="bx-num-q1" data-group="numbers" data-flag="q1" type="checkbox" /> Q1</label>
+          <label class="bx-check"><input id="bx-num-median" data-group="numbers" data-flag="median" type="checkbox" /> Median</label>
+          <label class="bx-check"><input id="bx-num-mean" data-group="numbers" data-flag="mean" type="checkbox" /> Mean</label>
+          <label class="bx-check"><input id="bx-num-q3" data-group="numbers" data-flag="q3" type="checkbox" /> Q3</label>
+          <label class="bx-check"><input id="bx-num-max" data-group="numbers" data-flag="max" type="checkbox" /> Max</label>
+          <label class="bx-check"><input id="bx-num-outlier" data-group="numbers" data-flag="outlier" type="checkbox" /> Outlier</label>
+        </div>
+      </section>
+      <section>
+        <h2>Data</h2>
+        <p class="micro">Salin kolom dari Excel beserta headernya, lalu tempel di sini. Header menjadi nama di sumbu X. Jumlah kolom mengikuti tempelan. Warna awal mengikuti palet formasi, dan bisa diubah di header tabel.</p>
+        <textarea id="bx-paste" rows="6" spellcheck="false" placeholder="Pre Parigi&#9;Parigi Top&#10;10,4&#9;9,31&#10;9,75&#9;9,31"></textarea>
+        <button type="button" class="btn ghost wide" id="bx-paste-apply">Tempel ke tabel</button>
+        <div class="row-actions">
+          <button type="button" class="btn ghost" id="bx-sample">Muat contoh</button>
+          <button type="button" class="btn ghost" id="bx-clear">Kosongkan</button>
+        </div>
+        <p class="status" id="bx-status" role="status"></p>
+      </section>
+    </aside>
+    <main>
+      <div class="stage">
+        <div class="csg-toolbar">
+          <span class="micro">Pratinjau</span>
+          <div class="zoom-bar" title="Seret gambar untuk menggeser. Gulir untuk memperbesar.">
+            <button type="button" class="btn ghost zoom-btn" id="bx-zoom-out" aria-label="Perkecil gambar">−</button>
+            <span id="bx-zoom-label">100%</span>
+            <button type="button" class="btn ghost zoom-btn" id="bx-zoom-in" aria-label="Perbesar gambar">+</button>
+            <button type="button" class="btn ghost zoom-btn" id="bx-zoom-fit">Sesuai</button>
+          </div>
+        </div>
+        <div class="sheet" id="bx-sheet">
+          <canvas id="bx-chart" aria-label="Box and whisker plot"></canvas>
+        </div>
+      </div>
+      <section class="bx-below">
+        <h2>Tabel data <span class="count" id="bx-col-count"></span></h2>
+        <p class="micro">Satu kolom satu kategori. Header adalah sumbu X. Tempel langsung di tabel juga bisa, selama salinan dari Excel berisi beberapa sel.</p>
+        <div id="bx-table"></div>
+        <div class="bx-table-actions">
+          <button type="button" class="btn ghost" id="bx-add-col">Tambah kolom</button>
+          <button type="button" class="btn ghost" id="bx-add-row">Tambah baris</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+
+  <div class="layout wide" id="panel-ai" role="tabpanel" hidden>
+    <aside class="panel">
+      <section class="feature-box">
+        <h2>1. Ringkasan sumur (AI)</h2>
+        <p class="micro">Pilih sumur, lalu klik Generate. Hasil 1 paragraf disimpan agar API tidak dipanggil ulang.</p>
+        <label>Mode ringkasan
+          <select id="ai-summary-mode">
+            <option value="one">Satu sumur</option>
+            <option value="selected">Sumur terpilih</option>
+            <option value="all">Semua sumur</option>
+          </select>
+        </label>
+        <div id="ai-well-picks" class="ai-well-picks"></div>
+        <button type="button" class="btn" id="ai-generate-summary">Generate ringkasan</button>
+        <p class="status" id="ai-summary-status" role="status"></p>
+      </section>
+      <section>
+        <h2>Casing depth suggestion</h2>
+        <p class="micro">AI menganalisis semua sumur di proyek sebagai offset wells untuk mengusulkan casing setting depth sumur baru (proposed).</p>
+        <label>Nama sumur proposed
+          <input id="ai-proposed-name" type="text" placeholder="OOA-5" spellcheck="false" />
+        </label>
+        <label>Catatan desain (opsional)
+          <textarea id="ai-proposed-notes" rows="3" placeholder="Target formasi, kendala, dll."></textarea>
+        </label>
+        <button type="button" class="btn" id="ai-generate-casing">Generate casing suggestion</button>
+        <p class="status" id="ai-casing-status" role="status"></p>
+      </section>
+    </aside>
+    <main>
+      <section class="ai-results">
+        <h2>Hasil ringkasan</h2>
+        <div id="ai-summary-results"></div>
+        <h2>Hasil casing suggestion</h2>
+        <div id="ai-casing-results"></div>
+      </section>
+    </main>
+  </div>
+
+
+  <div id="settings-modal" class="settings-modal" hidden aria-hidden="true">
+    <div class="settings-backdrop" data-settings-close="1"></div>
+    <div class="settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <header class="settings-header">
+        <h2 id="settings-title">Settings API</h2>
+        <button type="button" class="btn ghost" id="settings-close" data-settings-close="1">Tutup</button>
+      </header>
+      <div class="settings-body">
+        <label>Provider
+          <select id="set-provider">
+            <option value="openai">OpenAI</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="grok">Grok (xAI)</option>
+            <option value="custom">Custom endpoint</option>
+          </select>
+        </label>
+        <label>Model
+          <input id="set-model" type="text" placeholder="gpt-4o-mini / deepseek-chat / grok-2" spellcheck="false" />
+        </label>
+        <label>API Key
+          <input id="set-apikey" type="password" placeholder="sk-..." spellcheck="false" autocomplete="off" />
+        </label>
+        <label>Endpoint (opsional / custom)
+          <input id="set-endpoint" type="text" placeholder="https://api.openai.com/v1/chat/completions" spellcheck="false" />
+        </label>
+        <label>API base URL
+          <input id="set-api-base" type="text" placeholder="Leave empty for portable (same as this app)" spellcheck="false" />
+        </label>
+        <p class="micro">Portable EXE: leave empty. The app talks to itself on this PC.</p>
+        <label>Local data folder (full path)
+          <input id="set-data-dir" type="text" placeholder="e.g. D:\MigasData or leave empty for ./migas_data" spellcheck="false" />
+        </label>
+        <button type="button" class="btn ghost" id="settings-apply-data-dir">Apply data folder</button>
+        <p class="micro" id="settings-data-dir-status"></p>
+        <p class="micro">Leave empty if the site is served from the VPS and nginx proxies <code>/api</code>. Example: <code>http://YOUR_IP:5055</code> only if you call the API port directly.</p>
+        <label>API token (optional)
+          <input id="set-api-token" type="password" placeholder="shared secret" spellcheck="false" autocomplete="off" />
+        </label>
+        <label>VPS Settings URL (opsional)
+          <input id="set-vps-url" type="text" placeholder="https://your-vps.example.com/migas-settings.json" spellcheck="false" />
+        </label>
+        <p class="micro">Settings disimpan di browser. Jika VPS URL diisi, ikut di-sync (GET saat muat, PUT/POST saat simpan).</p>
+        <div class="row-actions">
+          <button type="button" class="btn" id="settings-save">Save settings</button>
+          <button type="button" class="btn ghost" id="settings-test-api">Test API connection</button>
+          <button type="button" class="btn ghost" id="settings-load-vps">Muat dari VPS</button>
+        </div>
+        <p class="status" id="settings-status" role="status"></p>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="storage-modal" class="settings-modal" hidden>
+    <div class="settings-backdrop" id="storage-backdrop"></div>
+    <div class="settings-card" style="width:min(640px,100%)">
+      <header class="settings-header">
+        <h2>Save / Load project</h2>
+        <button type="button" class="btn ghost" id="storage-close">Close</button>
+      </header>
+      <div class="settings-body">
+        <h3>Load from this PC (folder)</h3>
+        <p class="micro">JSON files in the local data folder (next to the app, or the folder you set in Settings).</p>
+        <div class="row-actions">
+          <button type="button" class="btn ghost" id="storage-refresh">Refresh list</button>
+        </div>
+        <div id="storage-file-list" class="storage-file-list"></div>
+        <h3>Load from my device</h3>
+        <button type="button" class="btn ghost" id="storage-load-device">Choose JSON file</button>
+        <input id="storage-device-file" type="file" accept=".json,application/json" hidden />
+        <hr />
+        <h3>Save to this PC (folder)</h3>
+        <label>File name
+          <input id="storage-save-name" type="text" placeholder="my-project" spellcheck="false" />
+        </label>
+        <button type="button" class="btn" id="storage-save-vps">Save to this PC (folder)</button>
+        <h3>Save to my device</h3>
+        <button type="button" class="btn ghost" id="storage-save-device">Download JSON</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="layout wide" id="panel-automl" role="tabpanel" hidden>
+    <aside class="panel">
+      <section class="feature-box">
+        <h2>AutoML wizard</h2>
+        <p class="micro">Guided steps from CSV to prediction using AutoML-Alex on your VPS.</p>
+        <div class="automl-progress" id="automl-progress">Step 1 of 8</div>
+        <ol class="automl-steps" id="automl-step-list">
+          <li data-step="1" class="on">1. Import CSV</li>
+          <li data-step="2">2. Choose X / Y</li>
+          <li data-step="3">3. Feature engineering</li>
+          <li data-step="4">4. Choose models</li>
+          <li data-step="5">5. Train</li>
+          <li data-step="6">6. Results</li>
+          <li data-step="7">7. Save model</li>
+          <li data-step="8">8. Predict</li>
+        </ol>
+      </section>
+      <section id="automl-side-summary" class="feature-box">
+        <h2>Summary</h2>
+        <p class="micro" id="automl-summary-text">No CSV loaded yet.</p>
+      </section>
+    </aside>
+    <main>
+      <div id="automl-step-panel" class="automl-main"></div>
+      <div class="row-actions" style="padding:12px 16px">
+        <button type="button" class="btn ghost" id="automl-back">Back</button>
+        <button type="button" class="btn" id="automl-next">Next</button>
+      </div>
+      <p class="status" id="automl-status" role="status"></p>
+    </main>
+  </div>
+
+<script src="shared/vendor/xlsx.full.min.js"></script>
+  <script src="shared/vendor/jspdf.umd.min.js"></script>
+  <script src="azimuth/azimuth.js?v=20261102a"></script>
+  <script src="casing/casing.js?v=20261102a"></script>
+  <script src="drilling/drilling.js?v=20261102a"></script>
+  <script src="boxplot/boxplot.js?v=20261102a"></script>
+  <script src="shared/storage.js?v=20261102a"></script>
+  <script src="automl/automl.js?v=20261102a"></script>
+  <script src="ai/ai.js?v=20261102a"></script>
+</body>
+</html>

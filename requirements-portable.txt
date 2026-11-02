@@ -1,0 +1,11 @@
+flask==3.0.3
+flask-cors==4.0.1
+waitress==3.0.0
+pandas==2.0.3
+numpy==1.24.4
+scikit-learn==1.3.2
+joblib==1.3.2
+pyinstaller==6.3.0
+# AutoML library (may need Python 3.10–3.11)
+automl-alex==2023.3.11
+nevergrad>=1.0.0

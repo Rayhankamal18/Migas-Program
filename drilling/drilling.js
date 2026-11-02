@@ -1,5 +1,6 @@
 (function () {
-  const STORAGE_KEY = "drilling-summary-v1";
+  const STORAGE_KEY = "drilling-summary-v2";
+  const WELL_COLORS = ["#E8A317", "#B87333", "#F2D11A", "#F2B8C6", "#7EB8DA", "#45BF5D", "#9f1239", "#0284c7", "#7c3aed", "#0f766e"];
   const FONT = "12px Arial, Helvetica, sans-serif";
   const FONT_BOLD = "700 12px Arial, Helvetica, sans-serif";
   const TITLE_FONT = '700 22px "Segoe UI", Arial, Helvetica, sans-serif';
@@ -48,7 +49,11 @@
     spreadSort: "",
     formations: [],
     progress: [],
-    events: []
+    events: [],
+    // multi-well
+    viewMode: "single", // single | compare
+    activeWellId: "",
+    wells: []
   };
 
   const selectedEvents = new Set();
@@ -72,6 +77,246 @@
   function uid() {
     return "d" + Math.random().toString(36).slice(2, 10);
   }
+
+  function wellUid() {
+    return "dw" + Math.random().toString(36).slice(2, 10);
+  }
+
+  function emptyWell(name, color) {
+    return {
+      id: wellUid(),
+      name: name || "Sumur baru",
+      color: color || WELL_COLORS[state.wells.length % WELL_COLORS.length],
+      td: null,
+      tdTvd: null,
+      endDay: null,
+      casingWellId: "",
+      casingWellName: "",
+      formations: [],
+      progress: [],
+      events: [],
+      visible: true
+    };
+  }
+
+  function cloneDeep(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function activeWell() {
+    if (!state.wells.length) return null;
+    let w = state.wells.find((item) => item.id === state.activeWellId);
+    if (!w) {
+      w = state.wells[0];
+      state.activeWellId = w.id;
+    }
+    return w;
+  }
+
+  function pullActiveFromState() {
+    const w = activeWell();
+    if (!w) return;
+    w.name = (state.well || "").trim() || w.name || "Sumur";
+    w.td = state.td;
+    w.tdTvd = state.tdTvd;
+    w.endDay = state.endDay;
+    w.casingWellId = state.casingWellId || "";
+    w.casingWellName = state.casingWellName || "";
+    w.formations = cloneDeep(state.formations || []);
+    w.progress = cloneDeep(state.progress || []);
+    w.events = cloneDeep(state.events || []);
+  }
+
+  function pushActiveToState() {
+    const w = activeWell();
+    if (!w) {
+      state.well = "";
+      state.td = null;
+      state.tdTvd = null;
+      state.endDay = null;
+      state.casingWellId = "";
+      state.casingWellName = "";
+      state.formations = [];
+      state.progress = [];
+      state.events = [];
+      return;
+    }
+    state.well = w.name || "";
+    state.td = w.td;
+    state.tdTvd = w.tdTvd;
+    state.endDay = w.endDay;
+    state.casingWellId = w.casingWellId || "";
+    state.casingWellName = w.casingWellName || "";
+    state.formations = cloneDeep(w.formations || []);
+    state.progress = cloneDeep(w.progress || []);
+    state.events = cloneDeep(w.events || []);
+  }
+
+  function ensureWellsFromLegacy() {
+    if (Array.isArray(state.wells) && state.wells.length) {
+      if (!state.activeWellId || !state.wells.some((w) => w.id === state.activeWellId)) {
+        state.activeWellId = state.wells[0].id;
+      }
+      return;
+    }
+    const w = emptyWell(state.well || "Sumur 1", WELL_COLORS[0]);
+    w.td = state.td;
+    w.tdTvd = state.tdTvd;
+    w.endDay = state.endDay;
+    w.casingWellId = state.casingWellId || "";
+    w.casingWellName = state.casingWellName || "";
+    w.formations = cloneDeep(state.formations || []);
+    w.progress = cloneDeep(state.progress || []);
+    w.events = cloneDeep(state.events || []);
+    state.wells = [w];
+    state.activeWellId = w.id;
+  }
+
+  function switchWell(id) {
+    if (!id || id === state.activeWellId) return;
+    pullActiveFromState();
+    if (!state.wells.some((w) => w.id === id)) return;
+    state.activeWellId = id;
+    selectedEvents.clear();
+    selectAnchor = -1;
+    pushActiveToState();
+    applyChrome();
+    renderAll();
+    renderWellList();
+    requestDraw();
+    persist();
+  }
+
+  function addWell(name) {
+    pullActiveFromState();
+    const w = emptyWell(name || ("Sumur " + (state.wells.length + 1)));
+    state.wells.push(w);
+    state.activeWellId = w.id;
+    selectedEvents.clear();
+    pushActiveToState();
+    applyChrome();
+    renderAll();
+    renderWellList();
+    requestDraw();
+    persist();
+    setStatus("Sumur baru ditambahkan. Isi progress dan masalah untuk sumur ini.");
+  }
+
+  function duplicateActiveWell() {
+    pullActiveFromState();
+    const srcWell = activeWell();
+    if (!srcWell) return;
+    const w = emptyWell((srcWell.name || "Sumur") + " copy", srcWell.color);
+    w.td = srcWell.td;
+    w.tdTvd = srcWell.tdTvd;
+    w.endDay = srcWell.endDay;
+    w.casingWellId = srcWell.casingWellId;
+    w.casingWellName = srcWell.casingWellName;
+    w.formations = cloneDeep(srcWell.formations);
+    w.progress = cloneDeep(srcWell.progress).map((item) => Object.assign({}, item, { id: uid() }));
+    w.events = cloneDeep(srcWell.events).map((item) => Object.assign({}, item, { id: uid() }));
+    state.wells.push(w);
+    state.activeWellId = w.id;
+    selectedEvents.clear();
+    pushActiveToState();
+    applyChrome();
+    renderAll();
+    renderWellList();
+    requestDraw();
+    persist();
+    setStatus("Sumur diduplikasi.");
+  }
+
+  function deleteWell(id) {
+    if (state.wells.length <= 1) {
+      setStatus("Minimal satu sumur harus ada.");
+      return;
+    }
+    pullActiveFromState();
+    state.wells = state.wells.filter((w) => w.id !== id);
+    if (state.activeWellId === id) {
+      state.activeWellId = state.wells[0].id;
+      selectedEvents.clear();
+      pushActiveToState();
+      applyChrome();
+      renderAll();
+    }
+    renderWellList();
+    requestDraw();
+    persist();
+  }
+
+  function renameActiveWell(name) {
+    state.well = name;
+    const w = activeWell();
+    if (w) w.name = (name || "").trim() || w.name;
+    renderWellList();
+  }
+
+  function renameWellById(id, name) {
+    const w = state.wells.find((item) => item.id === id);
+    if (!w) return;
+    const next = (name || "").trim() || w.name || "Sumur";
+    w.name = next;
+    if (id === state.activeWellId) {
+      state.well = next;
+      const input = document.getElementById("ds-well");
+      if (input && document.activeElement !== input) input.value = next;
+    }
+    renderWellList();
+    persist();
+    requestDraw();
+  }
+
+  function setViewMode(mode) {
+    pullActiveFromState();
+    state.viewMode = mode === "compare" ? "compare" : "single";
+    const single = document.getElementById("ds-view-single");
+    const compare = document.getElementById("ds-view-compare");
+    if (single) single.setAttribute("aria-pressed", state.viewMode === "single" ? "true" : "false");
+    if (compare) compare.setAttribute("aria-pressed", state.viewMode === "compare" ? "true" : "false");
+    // hide spread in compare for clarity
+    if (state.viewMode === "compare" && state.spread) {
+      state.spread = false;
+      syncDepthMode();
+    }
+    renderWellList();
+    requestDraw();
+    persist();
+  }
+
+  function renderWellList() {
+    const root = document.getElementById("ds-wells");
+    const count = document.getElementById("ds-well-count");
+    if (count) count.textContent = String(state.wells.length);
+    if (!root) return;
+    if (!state.wells.length) {
+      root.innerHTML = "<p class=\"micro\">Belum ada sumur.</p>";
+      return;
+    }
+    root.innerHTML = state.wells.map((w) => {
+      const active = w.id === state.activeWellId;
+      const visChecked = w.visible !== false ? "checked" : "";
+      return (
+        "<div class=\"ds-well-row" + (active ? " active" : "") + "\" data-well=\"" + esc(w.id) + "\">" +
+          "<button type=\"button\" class=\"ds-well-select\" data-well-select=\"" + esc(w.id) + "\" title=\"Pilih sumur\">" +
+            "<span class=\"ds-well-swatch\" style=\"background:" + esc(w.color || "#888") + "\"></span>" +
+            (active ? "<span class=\"ds-well-badge\">aktif</span>" : "") +
+          "</button>" +
+          "<input type=\"text\" class=\"ds-well-rename\" data-well-rename=\"" + esc(w.id) + "\" value=\"" + esc(w.name || "Sumur") + "\" spellcheck=\"false\" autocomplete=\"off\" title=\"Ganti nama sumur\" />" +
+          "<label class=\"ds-well-vis\" title=\"Tampilkan di mode Bandingkan\">" +
+            "<input type=\"checkbox\" data-well-vis=\"" + esc(w.id) + "\" " + visChecked + " />" +
+          "</label>" +
+          "<button type=\"button\" class=\"ds-well-del\" data-well-del=\"" + esc(w.id) + "\" title=\"Hapus\">×</button>" +
+        "</div>"
+      );
+    }).join("");
+  }
+
+  function visibleCompareWells() {
+    return state.wells.filter((w) => w.visible !== false);
+  }
+
 
   function esc(value) {
     return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
@@ -246,6 +491,11 @@
 
   function figureTitle() {
     const title = (state.title || "").trim() || "Time vs Depth";
+    if (state.viewMode === "compare") {
+      const names = visibleCompareWells().map((w) => w.name).filter(Boolean);
+      if (!names.length) return title + " — Compare";
+      return title + " — " + names.join(" / ");
+    }
     const well = (state.well || "").trim();
     if (!well || title.toLowerCase().includes(well.toLowerCase())) return title;
     return `${title} — ${well}`;
@@ -302,13 +552,22 @@
   }
 
   function domainDay() {
-    if (state.endDay != null && state.endDay >= 1) return state.endDay;
+    if (state.viewMode !== "compare" && state.endDay != null && state.endDay >= 1) return state.endDay;
     let max = 1;
     const consider = (day) => {
       if (day != null && day >= 1) max = Math.max(max, day);
     };
-    state.progress.forEach((item) => consider(item.day));
-    state.events.forEach((item) => consider(item.day));
+    if (state.viewMode === "compare") {
+      visibleCompareWells().forEach((w) => {
+        if (w.endDay != null && w.endDay >= 1) max = Math.max(max, w.endDay);
+        (w.progress || []).forEach((item) => consider(item.day));
+        (w.events || []).forEach((item) => consider(item.day));
+      });
+    } else {
+      if (state.endDay != null && state.endDay >= 1) return state.endDay;
+      state.progress.forEach((item) => consider(item.day));
+      state.events.forEach((item) => consider(item.day));
+    }
     return Math.max(max, 2);
   }
 
@@ -644,16 +903,31 @@
 
   function domainDepth() {
     let max = 0;
-    const manualTd = depthMode() === "tvd" ? state.tdTvd : state.td;
-    if (manualTd != null) max = Math.max(max, manualTd);
-    state.progress.forEach((item) => {
+    const considerItem = (item) => {
       const depth = chartDepth(item);
       if (depth != null) max = Math.max(max, depth);
-    });
-    state.events.forEach((item) => {
-      const depth = chartDepth(item);
-      if (depth != null) max = Math.max(max, depth);
-    });
+    };
+    if (state.viewMode === "compare") {
+      visibleCompareWells().forEach((w) => {
+        const manualTd = depthMode() === "tvd" ? w.tdTvd : w.td;
+        if (manualTd != null) max = Math.max(max, manualTd);
+        (w.progress || []).forEach(considerItem);
+        (w.events || []).forEach(considerItem);
+        if (state.showFormations) {
+          (w.formations || []).forEach((fm) => {
+            const top = depthMode() === "tvd" ? fm.topTvd : fm.topMd;
+            const base = depthMode() === "tvd" ? fm.baseTvd : fm.baseMd;
+            if (top != null) max = Math.max(max, top);
+            if (base != null) max = Math.max(max, base);
+          });
+        }
+      });
+    } else {
+      const manualTd = depthMode() === "tvd" ? state.tdTvd : state.td;
+      if (manualTd != null) max = Math.max(max, manualTd);
+      state.progress.forEach(considerItem);
+      state.events.forEach(considerItem);
+    }
     if (state.showFormations) {
       state.formations.forEach((item) => {
         const span = formationSpan(item);
@@ -827,7 +1101,10 @@
     const markersAll = plottedEvents();
     const markersIn = markersAll.filter((item) => categoryShown(item.category));
     const side = sideSpec();
-    const drawable = curveInfo.points.length || markersAll.length || side.right > 0;
+    let drawable = curveInfo.points.length || markersAll.length || side.right > 0;
+    if (!drawable && state.viewMode === "compare") {
+      drawable = visibleCompareWells().some((w) => (w.progress && w.progress.length) || (w.events && w.events.length));
+    }
     if (!drawable) return { empty: true, w: 920, h: 480 };
 
     const dayMax = domainDay();
@@ -895,6 +1172,24 @@
       .slice()
       .sort((a, b) => a.day - b.day || a.depth - b.depth)
       .map((item) => ({ x: xOf(item.day), y: yOf(item.depth) }));
+    const multiCurves = [];
+    if (state.viewMode === "compare") {
+      visibleCompareWells().forEach((w) => {
+        const pts = (w.progress || [])
+          .filter((item) => item.day != null && chartDepth(item) != null)
+          .map((item) => ({ day: item.day, depth: chartDepth(item) }));
+        if (!pts.length) {
+          (w.events || []).filter((item) => item.day != null && chartDepth(item) != null)
+            .forEach((item) => pts.push({ day: item.day, depth: chartDepth(item) }));
+        }
+        pts.sort((a, b) => a.day - b.day || a.depth - b.depth);
+        multiCurves.push({
+          name: w.name || "Sumur",
+          color: w.color || DEPTH_COLOR,
+          points: pts.map((item) => ({ x: xOf(item.day), y: yOf(item.depth) }))
+        });
+      });
+    }
     const markers = placeMarkers(markersIn.map((item) => ({
       x: xOf(item.day),
       y: yOf(item.depth),
@@ -957,6 +1252,7 @@
       dayTicks,
       dayNumberExtent,
       curve,
+      multiCurves: typeof multiCurves !== "undefined" ? multiCurves : [],
       showDepth,
       markers,
       legend,
@@ -1236,7 +1532,19 @@
       ctx.stroke();
     });
     paintShoeGuides(ctx, figure);
-    if (figure.showDepth && figure.curve.length >= 2) {
+    if (figure.multiCurves && figure.multiCurves.length) {
+      figure.multiCurves.forEach((curve) => {
+        if (!curve.points || !curve.points.length) return;
+        ctx.beginPath();
+        curve.points.forEach((point, index) => (index ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y)));
+        ctx.setLineDash([]);
+        ctx.lineWidth = 2.6;
+        ctx.strokeStyle = curve.color || DEPTH_COLOR;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.stroke();
+      });
+    } else if (figure.showDepth && figure.curve.length >= 2) {
       ctx.beginPath();
       figure.curve.forEach((point, index) => (index ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y)));
       ctx.setLineDash([8, 5]);
@@ -2322,6 +2630,7 @@
     renderList("event");
     renderFormations();
     fillCasingSelect();
+    renderWellList();
   }
 
   function focusPending() {
@@ -2532,11 +2841,11 @@
       casingWellId: "",
       casingWellName: "OOA-3",
       formations: [
-        layer("Pre Parigi", 0, 1500, "#7A3412"),
-        layer("Parigi", 1500, 1900, "#2F9E3A"),
-        layer("Main", 1900, 4373, "#3F3F3F"),
-        layer("Baturaja", 4373, 8020, "#1A73C9"),
-        layer("Lower", 8020, 10303, "#F0B429")
+        layer("Pre Parigi", 0, 1500, FM_COLORS[0]),
+        layer("Parigi", 1500, 1900, FM_COLORS[1]),
+        layer("Main", 1900, 4373, FM_COLORS[2]),
+        layer("Baturaja", 4373, 8020, FM_COLORS[3]),
+        layer("Lower", 8020, 10303, FM_COLORS[4])
       ],
       progress: [
         point(1, 280),
@@ -2598,6 +2907,35 @@
     state.formations = data.formations || [];
     state.progress = data.progress || [];
     state.events = data.events || [];
+    state.viewMode = data.viewMode === "compare" ? "compare" : "single";
+    if (Array.isArray(data.wells) && data.wells.length) {
+      state.wells = data.wells.map((raw, idx) => {
+        const base = emptyWell(raw && raw.name, (raw && raw.color) || WELL_COLORS[idx % WELL_COLORS.length]);
+        return {
+          id: (raw && raw.id) || base.id,
+          name: (raw && raw.name) || base.name,
+          color: (raw && raw.color) || base.color,
+          td: positiveOrNull(raw && raw.td),
+          tdTvd: positiveOrNull(raw && raw.tdTvd),
+          endDay: dayOrNull(raw && raw.endDay),
+          casingWellId: (raw && raw.casingWellId) || "",
+          casingWellName: (raw && raw.casingWellName) || "",
+          formations: Array.isArray(raw && raw.formations) ? raw.formations.map(normalizeFormation) : [],
+          progress: Array.isArray(raw && raw.progress) ? raw.progress.map(normalizeProgress) : [],
+          events: Array.isArray(raw && raw.events) ? raw.events.map(normalizeEvent) : [],
+          visible: !(raw && raw.visible === false)
+        };
+      });
+      state.activeWellId = data.activeWellId && state.wells.some((w) => w.id === data.activeWellId)
+        ? data.activeWellId
+        : state.wells[0].id;
+      pushActiveToState();
+    } else {
+      state.wells = [];
+      state.activeWellId = "";
+      ensureWellsFromLegacy();
+      pullActiveFromState();
+    }
   }
 
   function syncDepthMode() {
@@ -2666,35 +3004,17 @@
     if (symbolSize) symbolSize.value = numToInput(state.symbolSize);
     syncDepthMode();
     fillCasingSelect();
+    const single = document.getElementById("ds-view-single");
+    const compare = document.getElementById("ds-view-compare");
+    if (single) single.setAttribute("aria-pressed", state.viewMode === "single" ? "true" : "false");
+    if (compare) compare.setAttribute("aria-pressed", state.viewMode === "compare" ? "true" : "false");
+    renderWellList();
   }
 
   function persist() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        title: state.title,
-        well: state.well,
-        subtitle: state.subtitle,
-        td: state.td,
-        tdTvd: state.tdTvd,
-        endDay: state.endDay,
-        dayMode: state.dayMode,
-        dayStep: state.dayStep,
-        decimalComma: state.decimalComma,
-        depthMode: state.depthMode,
-        casingWellId: state.casingWellId,
-        casingWellName: state.casingWellName,
-        showCasing: state.showCasing,
-        showFormations: state.showFormations,
-        symbolSize: state.symbolSize,
-        colorRevision: state.colorRevision,
-        legendOff: normalizeLegendOff(state.legendOff),
-        spread: state.spread,
-        spreadOrder: state.spreadOrder.slice(),
-        spreadSort: state.spreadSort,
-        formations: state.formations,
-        progress: state.progress,
-        events: state.events
-      }));
+      pullActiveFromState();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot()));
     } catch (err) { /* storage unavailable */ }
   }
 
@@ -2766,7 +3086,11 @@
   }
 
   function ingest(data) {
-    if (!data || !Array.isArray(data.progress) || !Array.isArray(data.events)) return false;
+    // Multi-well files may have empty flat progress/events for some states;
+    // accept if wells[] exists OR classic progress/events arrays exist.
+    const hasWells = Array.isArray(data && data.wells) && data.wells.length > 0;
+    const hasFlat = data && Array.isArray(data.progress) && Array.isArray(data.events);
+    if (!data || (!hasWells && !hasFlat)) return false;
     applyData({
       title: data.title || "Time vs Depth",
       well: data.well || "",
@@ -2785,16 +3109,24 @@
       symbolSize: data.symbolSize,
       colorRevision: data.colorRevision,
       legendOff: data.legendOff,
+      spread: data.spread,
+      spreadOrder: data.spreadOrder,
+      spreadSort: data.spreadSort,
       formations: Array.isArray(data.formations) ? data.formations.map(normalizeFormation) : [],
-      progress: data.progress.map(normalizeProgress),
-      events: data.events.map(normalizeEvent)
+      progress: Array.isArray(data.progress) ? data.progress.map(normalizeProgress) : [],
+      events: Array.isArray(data.events) ? data.events.map(normalizeEvent) : [],
+      // CRITICAL: preserve multi-well payload
+      viewMode: data.viewMode,
+      activeWellId: data.activeWellId,
+      wells: data.wells
     });
     return true;
   }
 
   function loadStored() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      let raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) raw = localStorage.getItem("drilling-summary-v1");
       if (!raw) return false;
       return ingest(JSON.parse(raw));
     } catch (err) {
@@ -2803,6 +3135,7 @@
   }
 
   function snapshot() {
+    pullActiveFromState();
     return {
       title: state.title,
       well: state.well,
@@ -2826,15 +3159,34 @@
       spreadSort: state.spreadSort,
       formations: state.formations,
       progress: state.progress,
-      events: state.events
+      events: state.events,
+      viewMode: state.viewMode,
+      activeWellId: state.activeWellId,
+      wells: state.wells.map((w) => ({
+        id: w.id,
+        name: w.name,
+        color: w.color,
+        td: w.td,
+        tdTvd: w.tdTvd,
+        endDay: w.endDay,
+        casingWellId: w.casingWellId,
+        casingWellName: w.casingWellName,
+        formations: w.formations,
+        progress: w.progress,
+        events: w.events,
+        visible: w.visible !== false
+      }))
     };
   }
 
   function loadProject(data) {
     if (!ingest(data)) return false;
+    ensureWellsFromLegacy();
+    pushActiveToState();
     applyChrome();
     persist();
     renderAll();
+    renderWellList();
     requestDraw();
     return true;
   }
@@ -2856,6 +3208,7 @@
     if (selected.id === "tab-casing") return "casing";
     if (selected.id === "tab-drilling") return "drilling";
     if (selected.id === "tab-boxplot") return "boxplot";
+    if (selected.id === "tab-ai") return "ai";
     return "azimuth";
   }
 
@@ -2870,7 +3223,8 @@
       azimuth: window.AzimuthChart.snapshot(),
       casing: window.CasingSetting.snapshot(),
       drilling: snapshot(),
-      boxplot: window.BoxWhisker ? window.BoxWhisker.snapshot() : null
+      boxplot: window.BoxWhisker ? window.BoxWhisker.snapshot() : null,
+      ai: window.MigasAI ? window.MigasAI.snapshot() : null
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const link = document.createElement("a");
@@ -2899,7 +3253,8 @@
     const casingOk = data.casing ? window.CasingSetting.load(data.casing) : false;
     const drillingOk = data.drilling ? loadProject(data.drilling) : false;
     const boxOk = data.boxplot && window.BoxWhisker ? window.BoxWhisker.load(data.boxplot) : false;
-    if (!azimuthOk && !casingOk && !drillingOk && !boxOk) {
+    const aiOk = data.ai && window.MigasAI ? (window.MigasAI.load(data.ai), true) : false;
+    if (!azimuthOk && !casingOk && !drillingOk && !boxOk && !aiOk) {
       projectStatus("Berkas tidak berisi data yang bisa dibuka.");
       return;
     }
@@ -2922,11 +3277,16 @@
     state.formations = [];
     state.casingWellId = "";
     state.casingWellName = "";
+    state.td = null;
+    state.tdTvd = null;
+    state.endDay = null;
     state.legendOff = emptyLegendOff();
+    pullActiveFromState();
     persist();
     renderAll();
+    renderWellList();
     requestDraw();
-    setStatus("Kedalaman, formasi, dan masalah dikosongkan.");
+    setStatus("Data sumur aktif dikosongkan (sumur lain tetap aman).");
   }
 
   function pasteRow(line) {
@@ -3290,10 +3650,69 @@
       requestDraw();
     });
     document.getElementById("ds-well").addEventListener("input", (event) => {
-      state.well = event.target.value;
+      renameActiveWell(event.target.value);
       persist();
       requestDraw();
     });
+
+    document.getElementById("ds-add-well").addEventListener("click", () => addWell());
+    document.getElementById("ds-dup-well").addEventListener("click", () => duplicateActiveWell());
+    document.getElementById("ds-view-single").addEventListener("click", () => setViewMode("single"));
+    document.getElementById("ds-view-compare").addEventListener("click", () => setViewMode("compare"));
+
+    const wellsRoot = document.getElementById("ds-wells");
+    if (wellsRoot) {
+      wellsRoot.addEventListener("click", (event) => {
+        const sel = event.target.closest("[data-well-select]");
+        if (sel) {
+          switchWell(sel.getAttribute("data-well-select"));
+          return;
+        }
+        const del = event.target.closest("[data-well-del]");
+        if (del) {
+          deleteWell(del.getAttribute("data-well-del"));
+          return;
+        }
+      });
+      wellsRoot.addEventListener("change", (event) => {
+        const input = event.target;
+        if (!input || !input.getAttribute) return;
+        const renameId = input.getAttribute("data-well-rename");
+        if (renameId) {
+          renameWellById(renameId, input.value);
+          return;
+        }
+        const id = input.getAttribute("data-well-vis");
+        if (!id) return;
+        const w = state.wells.find((item) => item.id === id);
+        if (!w) return;
+        w.visible = !!input.checked;
+        persist();
+        requestDraw();
+      });
+      wellsRoot.addEventListener("input", (event) => {
+        const input = event.target;
+        if (!input || !input.getAttribute) return;
+        const renameId = input.getAttribute("data-well-rename");
+        if (!renameId) return;
+        // live update name without full re-render
+        const w = state.wells.find((item) => item.id === renameId);
+        if (!w) return;
+        w.name = (input.value || "").trim() || w.name;
+        if (renameId === state.activeWellId) {
+          state.well = w.name;
+          const top = document.getElementById("ds-well");
+          if (top && document.activeElement !== top) top.value = w.name;
+        }
+      });
+      wellsRoot.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        const input = event.target;
+        if (!input || !input.getAttribute || !input.getAttribute("data-well-rename")) return;
+        event.preventDefault();
+        input.blur();
+      });
+    }
     document.getElementById("ds-subtitle").addEventListener("input", (event) => {
       state.subtitle = event.target.value;
       persist();

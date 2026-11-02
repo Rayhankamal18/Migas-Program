@@ -1150,7 +1150,8 @@ function renderFormationControls() {
   if (!forms.includes(state.formation)) state.formation = forms[0] || "Tanpa formasi";
   const select = document.getElementById("formation-select");
   const wrap = document.getElementById("formation-select-wrap");
-  wrap.hidden = forms.length < 2;
+  if (wrap) wrap.hidden = true; // select is always shown in new UI
+  if (!select) return;
   const signature = forms.join("|");
   if (select.dataset.signature !== signature) {
     select.innerHTML = forms.map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join("");
@@ -1595,7 +1596,7 @@ function createWell(partial = {}) {
   const color = PALETTE.find((item) => !used.has(item.toLowerCase())) || PALETTE[state.records.length % PALETTE.length];
   return {
     id: uid(),
-    formation: state.formation || "Tanpa formasi",
+    formation: partial.formation || state.formation || "Tanpa formasi",
     well: partial.well || `Sumur ${currentFormationRecords().length + 1}`,
     azAwal: partial.azAwal ?? 0,
     azAkhir: partial.azAkhir ?? 10,
@@ -1745,10 +1746,13 @@ function init() {
     const next = event.target.value.trim() || "Tanpa formasi";
     const prev = state.formation;
     if (next === prev) return;
+    // Rename active formation label across its wells only
     state.records.forEach((rec) => {
       if (rec.formation === prev) rec.formation = next;
     });
     state.formation = next;
+    const select = document.getElementById("formation-select");
+    if (select) select.dataset.signature = "";
     if (!state.captionTouched) {
       state.caption = defaultCaption(next);
       document.getElementById("caption").value = state.caption;
@@ -1831,6 +1835,69 @@ function init() {
     persist();
     renderWellList();
     requestDraw();
+  });
+  const addFormationBtn = document.getElementById("btn-add-formation");
+  if (addFormationBtn) addFormationBtn.addEventListener("click", () => {
+    let base = "Formasi baru";
+    let name = base;
+    let n = 2;
+    const existing = new Set(state.records.map((r) => (r.formation || "Tanpa formasi")));
+    while (existing.has(name)) { name = base + " " + n; n += 1; }
+    // Switch to empty formation first so well list is empty for this formation
+    state.formation = name;
+    // Brand-new well data only for this formation
+    const well = createWell({
+      well: "Sumur 1",
+      formation: name,
+      azAwal: 0,
+      azAkhir: 30,
+      incAwal: 5,
+      incAkhir: 40
+    });
+    well.formation = name;
+    state.records.push(well);
+    state.captionTouched = false;
+    state.caption = defaultCaption(name);
+    const cap = document.getElementById("caption");
+    if (cap) cap.value = state.caption;
+    const fname = document.getElementById("formation-name");
+    if (fname) fname.value = name;
+    persist();
+    renderFormationControls();
+    const select = document.getElementById("formation-select");
+    if (select) {
+      select.value = name;
+      select.dataset.signature = ""; // force rebuild next time
+    }
+    renderFormationControls();
+    if (select) select.value = name;
+    renderWellList();
+    requestDraw();
+    setStatus("Formasi \"" + name + "\" ditambahkan dengan data sumur kosong/baru. Formasi lain tetap ada.");
+  });
+  const delFormationBtn = document.getElementById("btn-del-formation");
+  if (delFormationBtn) delFormationBtn.addEventListener("click", () => {
+    const forms = [...new Set(state.records.map((r) => r.formation).filter(Boolean))];
+    if (forms.length <= 1) {
+      setStatus("Minimal satu formasi harus ada.");
+      return;
+    }
+    const current = state.formation;
+    state.records = state.records.filter((r) => r.formation !== current);
+    const nextForms = [...new Set(state.records.map((r) => r.formation).filter(Boolean))];
+    state.formation = nextForms[0];
+    if (!state.captionTouched) {
+      state.caption = defaultCaption(state.formation);
+      const cap = document.getElementById("caption");
+      if (cap) cap.value = state.caption;
+    }
+    const fname = document.getElementById("formation-name");
+    if (fname) fname.value = state.formation;
+    persist();
+    renderFormationControls();
+    renderWellList();
+    requestDraw();
+    setStatus("Formasi dihapus. Formasi lain tidak berubah.");
   });
   document.getElementById("btn-png").addEventListener("click", () => exportImage("png"));
   document.getElementById("btn-jpg").addEventListener("click", () => exportImage("jpg"));
