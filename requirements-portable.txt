@@ -1,11 +1,19 @@
-flask==3.0.3
-flask-cors==4.0.1
-waitress==3.0.0
-pandas==2.0.3
-numpy==1.24.4
-scikit-learn==1.3.2
-joblib==1.3.2
-pyinstaller==6.3.0
-# AutoML library (may need Python 3.10–3.11)
-automl-alex==2023.3.11
+# Local / portable stack
+# Core API + charts save/load
+flask>=3.0.3
+flask-cors>=4.0.1
+waitress>=3.0.0
+pandas>=2.2.0
+numpy>=2.0.0
+scikit-learn>=1.5.0
+joblib>=1.3.2
+matplotlib>=3.8.0
+optuna>=3.6.0
+lightgbm>=4.3.0
+psutil>=5.9.0
 nevergrad>=1.0.0
+
+# AutoML-Alex:
+# - Python 3.8–3.10: prefer automl-alex==2023.3.11
+# - Python 3.11+: use automl-alex==1.6.10 (Start_Migas picks automatically)
+automl-alex==1.6.10

@@ -11,15 +11,26 @@
     target: "",
     features: [],
     task: "regression",
+    taskReason: "",
+    taskManual: false, // user overrode auto suggestion
     forceClassification: false,
     testSize: 0.2,
     randomState: 42,
+    splitMode: "auto", // auto = acak dari langkah 1 | files = CSV train & test terpisah
+    trainUploadId: null,
+    testUploadId: null,
+    trainFileName: null,
+    testFileName: null,
+    trainMeta: null, // {rows, cols}
+    testMeta: null,
     timeout: 300,
-    models: ["LightGBM", "XGBoost", "LinearModel"],
+    // Stable defaults for tabular AutoML (tree models work for clf + reg)
+    models: ["LightGBM", "CatBoost", "RandomForest"],
     jobId: null,
     result: null,
     pollTimer: null,
     uploadList: [],
+    pendingFile: null,
     // predict
     predRows: [], // array of objects
     predResults: null,
@@ -32,7 +43,8 @@
     if (typeof location !== "undefined" && location.protocol && location.protocol !== "file:") {
       return location.origin;
     }
-    return "";
+    // Local portable default when opened as file:// after Start_Migas.bat
+    return "http://127.0.0.1:5055";
   }
   function headers(json) {
     const h = {};
@@ -48,10 +60,32 @@
   function summary() {
     const el = document.getElementById("automl-summary-text");
     if (!el) return;
-    if (!state.uploadId) {
-      el.textContent = "No CSV loaded yet.";
+    if (state.result && state.result.model_file && !state.uploadId) {
+      el.innerHTML =
+        "Mode: <b>model tersimpan</b><br/>" +
+        "Model: <b>" + state.result.model_file + "</b><br/>" +
+        "Target (Y): <b>" + (state.result.target || state.target || "—") + "</b><br/>" +
+        "Inputs (X): <b>" + ((state.result.features && state.result.features.length) || state.features.length || 0) + "</b><br/>" +
+        "Task: <b>" + (state.result.task || state.task || "—") + "</b>";
       return;
     }
+    if (!state.uploadId) {
+      el.textContent = "Belum ada CSV. Punya model? Lompat ke langkah 7.";
+      return;
+    }
+    const splitInfo =
+      state.splitMode === "files"
+        ? "Split: <b>CSV train/test</b><br/>" +
+          "Train: <b>" +
+          (state.trainFileName || state.trainUploadId || state.sourceName || "—") +
+          "</b>" +
+          (state.trainMeta ? " (" + state.trainMeta.rows + " baris)" : "") +
+          "<br/>Test: <b>" +
+          (state.testFileName || state.testUploadId || "—") +
+          "</b>" +
+          (state.testMeta ? " (" + state.testMeta.rows + " baris)" : "") +
+          "<br/>"
+        : "Split: <b>acak " + Math.round((state.testSize || 0.2) * 100) + "% test</b><br/>";
     el.innerHTML =
       "File: <b>" + (state.sourceName || state.uploadId) + "</b><br/>" +
       "Rows: <b>" + state.rows + "</b><br/>" +
@@ -59,7 +93,11 @@
       "Target (Y): <b>" + (state.target || "—") + "</b><br/>" +
       "Inputs (X): <b>" + (state.features.length || 0) + "</b><br/>" +
       "Task: <b>" + state.task + "</b><br/>" +
-      "Timeout: <b>" + state.timeout + "s</b>";
+      splitInfo +
+      "Timeout: <b>" + state.timeout + "s</b>" +
+      (state.result && state.result.model_file
+        ? "<br/>Model: <b>" + state.result.model_file + "</b>"
+        : "");
   }
 
   function setStep(n) {
@@ -68,9 +106,14 @@
       const s = Number(li.getAttribute("data-step"));
       li.classList.toggle("on", s === state.step);
       li.classList.toggle("done", s < state.step);
+      // Langkah 7–8 selalu bisa diklik (model tersimpan / prediksi)
+      const jumpable = s === 7 || s === 8 || s <= state.step || (state.result && state.result.model_file && s >= 7);
+      li.classList.toggle("jumpable", !!jumpable);
+      li.setAttribute("tabindex", jumpable ? "0" : "-1");
+      li.setAttribute("role", "button");
     });
     const prog = document.getElementById("automl-progress");
-    if (prog) prog.textContent = "Step " + state.step + " of 8";
+    if (prog) prog.textContent = "Langkah " + state.step + " dari 8";
     render();
     summary();
   }
@@ -91,15 +134,93 @@
       best_model_name: data.best_model_name || null,
       metric: data.metric || null,
       scores: data.scores || null,
+      feature_schema: data.feature_schema || {},
+      training_curve: data.training_curve || null,
     };
     state.target = state.result.target;
     state.features = (state.result.features || []).filter((f) => f !== state.target);
     state.task = state.result.task;
+    // Mirror schema into columns so older UI helpers work without re-upload
+    state.columns = (state.result.features || []).map(function (fname) {
+      const sch = (state.result.feature_schema || {})[fname] || {};
+      return {
+        name: fname,
+        type: sch.type === "categorical" ? "text" : "numeric",
+        n_unique: sch.n_unique,
+        samples: sch.categories || [],
+        categories: sch.categories || [],
+      };
+    });
     state.predRows = [];
     state.predResults = null;
-    setStatus("Loaded model " + state.result.model_file + " — go to Predict without retraining.");
+    setStatus("Model dimuat: " + state.result.model_file + " — lanjut prediksi tanpa latih ulang.");
     summary();
     return state.result;
+  }
+
+  /** Heuristic + schema lookup for predict/optimize inputs. */
+  function featureInfo(name) {
+    const schema = (state.result && state.result.feature_schema) || {};
+    const sch = schema[name] || {};
+    const col = (state.columns || []).find(function (c) { return c.name === name; }) || {};
+    const nameL = String(name || "").toLowerCase().replace(/\s+/g, "_");
+    const nameHint = /(^|_)(gender|sex|jenis.?kelamin|kategori|category|status|tipe|type|class|grade|zone|litho|formation|fluid|fase|phase|flag|code|kode|label|group|grup|basin|method|metode)(_|$)/i.test(nameL);
+
+    let cats = Array.isArray(sch.categories) ? sch.categories.slice() : [];
+    if (!cats.length && Array.isArray(col.categories)) cats = col.categories.slice();
+    if (!cats.length && Array.isArray(col.samples)) {
+      const seen = {};
+      (col.samples || []).forEach(function (v) {
+        if (v == null || v === "") return;
+        const k = String(v);
+        if (!seen[k]) {
+          seen[k] = true;
+          cats.push(v);
+        }
+      });
+    }
+
+    let kind = sch.type;
+    if (!kind) {
+      if (col.type && col.type !== "numeric") kind = "categorical";
+      else if (nameHint) kind = "categorical";
+      else if (col.n_unique != null && col.n_unique <= 12 && col.type === "numeric") kind = "categorical";
+      else kind = "numeric";
+    }
+    if (kind === "categorical" && !cats.length && nameHint) {
+      // Common Gender defaults when schema empty (old model)
+      if (/gender|sex|jenis.?kelamin/i.test(nameL)) cats = ["male", "female"];
+    }
+
+    const min =
+      sch.min_suggest != null ? Number(sch.min_suggest)
+        : sch.min != null ? Number(sch.min)
+          : 0;
+    const max =
+      sch.max_suggest != null ? Number(sch.max_suggest)
+        : sch.max != null ? Number(sch.max)
+          : 100;
+    const def =
+      sch.default != null ? sch.default
+        : kind === "categorical" ? (cats[0] != null ? cats[0] : "")
+          : (min + max) / 2;
+
+    return {
+      name: name,
+      kind: kind,
+      categories: cats,
+      min: min,
+      max: max,
+      default: def,
+      reason: sch.reason || "",
+    };
+  }
+
+  function escapeAttr(v) {
+    return String(v == null ? "" : v)
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;");
   }
 
   function inputFeatures() {
@@ -111,14 +232,73 @@
     return feats.filter((f) => f && f !== y);
   }
 
+  function isIntegerLike(values) {
+    const nums = values.filter((v) => v != null && v !== "" && Number.isFinite(Number(v))).map(Number);
+    if (!nums.length) return false;
+    return nums.every((n) => Math.abs(n - Math.round(n)) < 1e-8);
+  }
+
+  /** AutoGluon-style problem-type inference from column meta (+ optional value samples). */
+  function inferTaskFromColumn(col, sampleValues) {
+    if (!col) return { task: "regression", reason: "Target belum dipilih." };
+    if (state.forceClassification) {
+      return { task: "classification", reason: "Anda memaksa klasifikasi." };
+    }
+    if (state.taskManual && (state.task === "classification" || state.task === "regression")) {
+      return { task: state.task, reason: "Dipilih manual." };
+    }
+
+    // Prefer server-side suggestion when available
+    if (col.suggested_task === "classification" || col.suggested_task === "regression") {
+      return {
+        task: col.suggested_task,
+        reason: col.suggested_reason || "Saran otomatis dari profil kolom.",
+      };
+    }
+
+    const nUnique = col.n_unique != null ? Number(col.n_unique) : null;
+    const uniqRatio = col.unique_ratio != null ? Number(col.unique_ratio) : null;
+    const values = Array.isArray(sampleValues) ? sampleValues : col.samples || [];
+
+    if (col.type !== "numeric") {
+      return { task: "classification", reason: "Target teks/kategori → klasifikasi." };
+    }
+    if (nUnique === 2) {
+      return { task: "classification", reason: "Tepat 2 nilai unik → klasifikasi biner (standar AutoML)." };
+    }
+    if (nUnique != null && nUnique > 1000) {
+      return { task: "regression", reason: nUnique + " nilai unik → regresi." };
+    }
+    const nRows = state.rows || 0;
+    const thresh = nRows >= 1000 ? 0.05 : 0.1;
+    const intLike = isIntegerLike(values);
+    if (nUnique != null && uniqRatio != null) {
+      if (intLike && nUnique <= Math.max(10, Math.floor(nRows * thresh))) {
+        return {
+          task: "classification",
+          reason: nUnique + " kelas bilangan bulat → klasifikasi.",
+        };
+      }
+      if (uniqRatio >= thresh && !intLike) {
+        return { task: "regression", reason: "Banyak nilai numerik unik → regresi." };
+      }
+      if (uniqRatio < thresh) {
+        return { task: "classification", reason: "Sedikit nilai unik → klasifikasi." };
+      }
+    }
+    // Fallback: old behaviour only when meta is thin
+    return {
+      task: col.type === "numeric" ? "regression" : "classification",
+      reason: col.type === "numeric" ? "Kolom numerik (fallback) → regresi." : "Kolom teks → klasifikasi.",
+    };
+  }
+
   function detectTask() {
     const col = state.columns.find((c) => c.name === state.target);
-    if (!col) {
-      state.task = "regression";
-      return;
-    }
-    if (state.forceClassification) state.task = "classification";
-    else state.task = col.type === "numeric" ? "regression" : "classification";
+    const inferred = inferTaskFromColumn(col);
+    state.task = inferred.task;
+    state.taskReason = inferred.reason;
+    state.forceClassification = state.task === "classification" && state.forceClassification;
   }
 
   // ---------- canvas plot helpers ----------
@@ -162,18 +342,39 @@
     return wrap;
   }
 
+  function drawAxisLabels(ctx, W, H, pad, xLabel, yLabel) {
+    ctx.fillStyle = "#475569";
+    ctx.font = "11px sans-serif";
+    if (xLabel) {
+      ctx.textAlign = "center";
+      ctx.fillText(xLabel, pad.l + (W - pad.l - pad.r) / 2, H - 6);
+    }
+    if (yLabel) {
+      ctx.save();
+      ctx.translate(12, pad.t + (H - pad.t - pad.b) / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = "center";
+      ctx.fillText(yLabel, 0, 0);
+      ctx.restore();
+    }
+  }
+
   function drawBarChart(canvas, labels, values, opts) {
     opts = opts || {};
     const ctx = canvas.getContext("2d");
     const W = canvas.width, H = canvas.height;
-    const pad = { l: 48, r: 16, t: 24, b: 48 };
+    const pad = { l: opts.yLabel ? 58 : 48, r: 16, t: 28, b: opts.xLabel ? 56 : 48 };
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, W, H);
-    const maxV = Math.max(...values.map(Number), 1e-9);
+    const nums = values.map(Number);
+    const maxV = Math.max(...nums.map((v) => Math.abs(v)), 1e-9);
+    const minV = Math.min(0, ...nums);
+    const span = maxV - minV || 1;
     const n = labels.length;
     const gap = 8;
     const barW = Math.max(8, (W - pad.l - pad.r - gap * n) / n);
+    const y0 = H - pad.b - ((0 - minV) / span) * (H - pad.t - pad.b);
     ctx.strokeStyle = "#cbd5e1";
     ctx.beginPath();
     ctx.moveTo(pad.l, pad.t);
@@ -181,32 +382,42 @@
     ctx.lineTo(W - pad.r, H - pad.b);
     ctx.stroke();
     values.forEach((v, i) => {
-      const h = ((H - pad.t - pad.b) * Number(v)) / maxV;
+      const val = Number(v);
+      const yVal = H - pad.b - ((val - minV) / span) * (H - pad.t - pad.b);
       const x = pad.l + gap + i * (barW + gap);
-      const y = H - pad.b - h;
+      const top = Math.min(y0, yVal);
+      const h = Math.abs(y0 - yVal);
       ctx.fillStyle = opts.colors && opts.colors[i] ? opts.colors[i] : "#2563eb";
-      ctx.fillRect(x, y, barW, h);
+      ctx.fillRect(x, top, barW, Math.max(h, 1));
       ctx.fillStyle = "#334155";
       ctx.font = "11px sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText(String(labels[i]).slice(0, 12), x + barW / 2, H - pad.b + 14);
-      ctx.fillText(Number(v).toFixed(3), x + barW / 2, y - 4);
+      ctx.fillText(String(labels[i]).slice(0, 14), x + barW / 2, H - pad.b + 14);
+      ctx.fillText(Number(v).toFixed(opts.digits != null ? opts.digits : 3), x + barW / 2, top - 4);
     });
+    drawAxisLabels(ctx, W, H, pad, opts.xLabel, opts.yLabel);
   }
 
   function drawScatter(canvas, xs, ys, opts) {
     opts = opts || {};
     const ctx = canvas.getContext("2d");
     const W = canvas.width, H = canvas.height;
-    const pad = { l: 48, r: 16, t: 16, b: 40 };
+    const pad = { l: opts.yLabel ? 58 : 48, r: 16, t: 20, b: opts.xLabel ? 52 : 40 };
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, W, H);
-    const all = xs.concat(ys);
-    let min = Math.min(...all), max = Math.max(...all);
-    if (min === max) { min -= 1; max += 1; }
-    const sx = (v) => pad.l + ((v - min) / (max - min)) * (W - pad.l - pad.r);
-    const sy = (v) => H - pad.b - ((v - min) / (max - min)) * (H - pad.t - pad.b);
+    let xmin = Math.min(...xs), xmax = Math.max(...xs);
+    let ymin = Math.min(...ys), ymax = Math.max(...ys);
+    if (xmin === xmax) { xmin -= 1; xmax += 1; }
+    if (ymin === ymax) { ymin -= 1; ymax += 1; }
+    // optional shared scale for actual-vs-predicted identity line
+    if (opts.sharedScale) {
+      const lo = Math.min(xmin, ymin), hi = Math.max(xmax, ymax);
+      xmin = ymin = lo;
+      xmax = ymax = hi;
+    }
+    const sx = (v) => pad.l + ((v - xmin) / (xmax - xmin)) * (W - pad.l - pad.r);
+    const sy = (v) => H - pad.b - ((v - ymin) / (ymax - ymin)) * (H - pad.t - pad.b);
     ctx.strokeStyle = "#e2e8f0";
     ctx.beginPath();
     ctx.moveTo(pad.l, H - pad.b);
@@ -214,12 +425,21 @@
     ctx.moveTo(pad.l, pad.t);
     ctx.lineTo(pad.l, H - pad.b);
     ctx.stroke();
+    if (opts.zeroY) {
+      ctx.strokeStyle = "#94a3b8";
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(pad.l, sy(0));
+      ctx.lineTo(W - pad.r, sy(0));
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     if (opts.diag) {
       ctx.strokeStyle = "#94a3b8";
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
-      ctx.moveTo(sx(min), sy(min));
-      ctx.lineTo(sx(max), sy(max));
+      ctx.moveTo(sx(xmin), sy(xmin));
+      ctx.lineTo(sx(xmax), sy(xmax));
       ctx.stroke();
       ctx.setLineDash([]);
     }
@@ -229,12 +449,23 @@
       ctx.arc(sx(xs[i]), sy(ys[i]), 3, 0, Math.PI * 2);
       ctx.fill();
     }
+    // tick hints
+    ctx.fillStyle = "#64748b";
+    ctx.font = "10px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(xmin.toFixed(2), pad.l, H - pad.b + 12);
+    ctx.fillText(xmax.toFixed(2), W - pad.r, H - pad.b + 12);
+    ctx.textAlign = "right";
+    ctx.fillText(ymin.toFixed(2), pad.l - 4, H - pad.b);
+    ctx.fillText(ymax.toFixed(2), pad.l - 4, pad.t + 8);
+    drawAxisLabels(ctx, W, H, pad, opts.xLabel, opts.yLabel);
   }
 
-  function drawHeatmap(canvas, matrix, rowLabels, colLabels) {
+  function drawHeatmap(canvas, matrix, rowLabels, colLabels, opts) {
+    opts = opts || {};
     const ctx = canvas.getContext("2d");
     const W = canvas.width, H = canvas.height;
-    const pad = { l: 60, r: 16, t: 24, b: 40 };
+    const pad = { l: 72, r: 16, t: 36, b: 52 };
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, W, H);
@@ -257,12 +488,13 @@
       }
       ctx.fillStyle = "#334155";
       ctx.textAlign = "right";
-      ctx.fillText(String(rowLabels[i] || i).slice(0, 10), pad.l - 6, pad.t + i * ch + ch / 2 + 4);
+      ctx.fillText(String(rowLabels[i] || i).slice(0, 12), pad.l - 6, pad.t + i * ch + ch / 2 + 4);
     }
     ctx.textAlign = "center";
     for (let j = 0; j < cols; j++) {
-      ctx.fillText(String(colLabels[j] || j).slice(0, 10), pad.l + j * cw + cw / 2, H - pad.b + 14);
+      ctx.fillText(String(colLabels[j] || j).slice(0, 12), pad.l + j * cw + cw / 2, H - pad.b + 14);
     }
+    drawAxisLabels(ctx, W, H, pad, opts.xLabel || "Y prediksi (kelas)", opts.yLabel || "Y aktual (kelas)");
   }
 
   function drawCurve(canvas, series, xKey, yKey, opts) {
@@ -270,7 +502,7 @@
     opts = opts || {};
     const ctx = canvas.getContext("2d");
     const W = canvas.width, H = canvas.height;
-    const pad = { l: 44, r: 12, t: 16, b: 36 };
+    const pad = { l: opts.yLabel ? 58 : 48, r: 12, t: 20, b: opts.xLabel ? 48 : 36 };
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, W, H);
@@ -295,6 +527,7 @@
       const xs = s[xKey] || s.x || [];
       const ys = s[yKey] || s.y || [];
       ctx.strokeStyle = colors[si % colors.length];
+      ctx.lineWidth = 2;
       ctx.beginPath();
       for (let i = 0; i < xs.length; i++) {
         const x = pad.l + xs[i] * (W - pad.l - pad.r);
@@ -303,22 +536,23 @@
         else ctx.lineTo(x, y);
       }
       ctx.stroke();
+      ctx.lineWidth = 1;
     });
-    // legend
     ctx.font = "11px sans-serif";
     series.forEach((s, si) => {
       ctx.fillStyle = colors[si % colors.length];
       const label = (s.class || s.name || "") + (s.auc != null ? " AUC=" + Number(s.auc).toFixed(3) : "");
       ctx.fillText(label, pad.l + 8, pad.t + 12 + si * 14);
     });
+    drawAxisLabels(ctx, W, H, pad, opts.xLabel, opts.yLabel);
   }
 
-function drawLineSeries(canvas, seriesList, opts) {
+  function drawLineSeries(canvas, seriesList, opts) {
     // seriesList: [{name, values: number[]}]
     opts = opts || {};
     const ctx = canvas.getContext("2d");
     const W = canvas.width, H = canvas.height;
-    const pad = { l: 48, r: 16, t: 16, b: 32 };
+    const pad = { l: opts.yLabel ? 58 : 48, r: 16, t: 28, b: opts.xLabel ? 48 : 36 };
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, W, H);
@@ -343,6 +577,7 @@ function drawLineSeries(canvas, seriesList, opts) {
     ctx.stroke();
     seriesList.forEach((s, si) => {
       ctx.strokeStyle = colors[si % colors.length];
+      ctx.lineWidth = 2;
       ctx.beginPath();
       s.values.forEach((v, i) => {
         const x = sx(i), y = sy(v);
@@ -350,101 +585,251 @@ function drawLineSeries(canvas, seriesList, opts) {
         else ctx.lineTo(x, y);
       });
       ctx.stroke();
+      ctx.lineWidth = 1;
     });
+    // legend
+    ctx.font = "11px sans-serif";
+    seriesList.forEach((s, si) => {
+      ctx.fillStyle = colors[si % colors.length];
+      ctx.fillText(s.name || ("seri " + (si + 1)), pad.l + 8 + si * 110, pad.t - 6);
+    });
+    drawAxisLabels(ctx, W, H, pad, opts.xLabel, opts.yLabel);
+  }
+
+  function drawHBarChart(canvas, labels, values, opts) {
+    opts = opts || {};
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width, H = canvas.height;
+    const pad = { l: 120, r: 48, t: 20, b: opts.xLabel ? 44 : 28 };
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, W, H);
+    const maxV = Math.max(...values.map(Number), 1e-9);
+    const n = labels.length;
+    const gap = 6;
+    const barH = Math.max(10, (H - pad.t - pad.b - gap * n) / n);
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.beginPath();
+    ctx.moveTo(pad.l, pad.t);
+    ctx.lineTo(pad.l, H - pad.b);
+    ctx.lineTo(W - pad.r, H - pad.b);
+    ctx.stroke();
+    values.forEach((v, i) => {
+      const w = ((W - pad.l - pad.r) * Number(v)) / maxV;
+      const y = pad.t + gap + i * (barH + gap);
+      ctx.fillStyle = opts.colors && opts.colors[i] ? opts.colors[i] : "#2563eb";
+      ctx.fillRect(pad.l, y, Math.max(w, 1), barH);
+      ctx.fillStyle = "#334155";
+      ctx.font = "11px sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText(String(labels[i]).slice(0, 18), pad.l - 6, y + barH / 2 + 4);
+      ctx.textAlign = "left";
+      ctx.fillText(Number(v).toFixed(opts.digits != null ? opts.digits : 3), pad.l + w + 4, y + barH / 2 + 4);
+    });
+    drawAxisLabels(ctx, W, H, pad, opts.xLabel || "Importance (X)", opts.yLabel || "Fitur");
+  }
+
+  function fmtScore(v, digits) {
+    if (v == null || !Number.isFinite(Number(v))) return "—";
+    return Number(v).toFixed(digits != null ? digits : 4);
+  }
+
+  function appendSectionTitle(host, title, blurb) {
+    const el = document.createElement("div");
+    el.className = "feature-box";
+    el.innerHTML = "<h3 style='margin:0 0 4px'>" + title + "</h3><p class='micro' style='margin:0'>" + blurb + "</p>";
+    host.appendChild(el);
   }
 
   function buildResultPlots(host, r) {
     host.innerHTML = "";
     const scores = r.scores || {};
     const task = r.task || state.task;
+    const isCls = task === "classification";
+    const yName = r.target || state.target || "Y";
+    const plots = r.plots || {};
+    const yTrue = r.y_test || [];
+    const yPred = r.y_pred_test || [];
 
-    // header metrics
+    const primaryKey = scores.primary_metric || r.metric || "";
+    const primaryVal = scores.primary_value != null ? scores.primary_value : scores[primaryKey];
+    const flatScores = Object.fromEntries(
+      Object.entries(scores).filter(([, v]) => typeof v !== "object")
+    );
+
     const head = document.createElement("div");
     head.className = "feature-box";
-    head.innerHTML =
-      "<h2>Step 6 — Results</h2>" +
-      "<p><b>Best model:</b> " + (r.best_model_name || "—") + "</p>" +
-      "<p><b>Metric:</b> " + (r.metric || "—") + "</p>" +
-      "<p><b>Parameters:</b></p><pre class='automl-log' style='max-height:120px'>" +
-      JSON.stringify(r.best_model_param || {}, null, 2) +
-      "</pre>" +
-      "<p><b>Scores:</b></p><pre class='automl-log' style='max-height:180px'>" +
-      JSON.stringify(
-        Object.fromEntries(Object.entries(scores).filter(([, v]) => typeof v !== "object")),
-        null,
-        2
-      ) +
-      "</pre>";
+    if (isCls) {
+      head.innerHTML =
+        "<h2>Langkah 6 — Hasil klasifikasi</h2>" +
+        "<p class='am-hero'>Model memprediksi <b>kelas " + yName + "</b> dari fitur X. " +
+        "Semua grafik di bawah memakai <b>data test (hold-out)</b> yang tidak ikut tuning.</p>" +
+        "<p><b>Model terbaik:</b> " + (r.best_model_name || "—") +
+        " &nbsp;|&nbsp; <b>Train:</b> " + (r.train_shape ? r.train_shape.join(" × ") : "—") +
+        " &nbsp;|&nbsp; <b>Test:</b> " + (r.test_shape ? r.test_shape.join(" × ") : "—") + "</p>" +
+        "<p><b>Metrik utama:</b> " + (primaryKey || "roc_auc_test") +
+        " = <b>" + fmtScore(primaryVal) + "</b> " +
+        "<span class='micro'>(semakin dekat 1 semakin baik)</span></p>" +
+        "<div class='table-scroll'><table class='automl-table'><thead><tr>" +
+        "<th>Akurasi train</th><th>Akurasi test</th><th>Balanced acc.</th><th>F1</th><th>Precision</th><th>Recall</th><th>ROC-AUC train</th><th>ROC-AUC test</th>" +
+        "</tr></thead><tbody><tr>" +
+        "<td>" + fmtScore(scores.accuracy_train) + "</td>" +
+        "<td>" + fmtScore(scores.accuracy_test) + "</td>" +
+        "<td>" + fmtScore(scores.balanced_accuracy_test) + "</td>" +
+        "<td>" + fmtScore(scores.f1_test != null ? scores.f1_test : scores.f1_macro_test) + "</td>" +
+        "<td>" + fmtScore(scores.precision_test) + "</td>" +
+        "<td>" + fmtScore(scores.recall_test) + "</td>" +
+        "<td>" + fmtScore(scores.roc_auc_train) + "</td>" +
+        "<td>" + fmtScore(scores.roc_auc_test) + "</td>" +
+        "</tr></tbody></table></div>" +
+        "<p class='micro'><b>Cara baca:</b> jika akurasi/ROC-AUC <i>train</i> jauh lebih tinggi dari <i>test</i>, model overfitting. " +
+        "ROC-AUC &amp; F1 lebih andal daripada akurasi saat kelas tidak seimbang.</p>" +
+        "<details class='fold'><summary>Parameter model &amp; skor mentah</summary>" +
+        "<pre class='automl-log' style='max-height:140px'>" + JSON.stringify(r.best_model_param || {}, null, 2) + "</pre>" +
+        "<pre class='automl-log' style='max-height:160px'>" + JSON.stringify(flatScores, null, 2) + "</pre></details>";
+    } else {
+      head.innerHTML =
+        "<h2>Langkah 6 — Hasil regresi</h2>" +
+        "<p class='am-hero'>Model memprediksi nilai numerik <b>" + yName + "</b> dari fitur X. " +
+        "Grafik membandingkan <b>Y aktual</b> vs <b>Y prediksi</b> pada data test.</p>" +
+        "<p><b>Model terbaik:</b> " + (r.best_model_name || "—") +
+        " &nbsp;|&nbsp; <b>Train:</b> " + (r.train_shape ? r.train_shape.join(" × ") : "—") +
+        " &nbsp;|&nbsp; <b>Test:</b> " + (r.test_shape ? r.test_shape.join(" × ") : "—") + "</p>" +
+        "<p><b>Metrik utama:</b> " + (primaryKey || "rmse_test") +
+        " = <b>" + fmtScore(primaryVal) + "</b> " +
+        "<span class='micro'>(RMSE/MAE: semakin kecil semakin baik; R²: semakin dekat 1 semakin baik)</span></p>" +
+        "<div class='table-scroll'><table class='automl-table'><thead><tr>" +
+        "<th>R² train</th><th>R² test</th><th>RMSE test</th><th>MAE test</th><th>MSE test</th><th>MAPE test %</th>" +
+        "</tr></thead><tbody><tr>" +
+        "<td>" + fmtScore(scores.r2_train) + "</td>" +
+        "<td>" + fmtScore(scores.r2_test) + "</td>" +
+        "<td>" + fmtScore(scores.rmse_test) + "</td>" +
+        "<td>" + fmtScore(scores.mae_test) + "</td>" +
+        "<td>" + fmtScore(scores.mse_test) + "</td>" +
+        "<td>" + fmtScore(scores.mape_test, 2) + "</td>" +
+        "</tr></tbody></table></div>" +
+        "<p class='micro'><b>Cara baca:</b> R² test jauh di bawah R² train → overfitting. " +
+        "Titik di grafik Aktual vs Prediksi harus mendekati garis putus-putus (prediksi sempurna).</p>" +
+        "<details class='fold'><summary>Parameter model &amp; skor mentah</summary>" +
+        "<pre class='automl-log' style='max-height:140px'>" + JSON.stringify(r.best_model_param || {}, null, 2) + "</pre>" +
+        "<pre class='automl-log' style='max-height:160px'>" + JSON.stringify(flatScores, null, 2) + "</pre></details>";
+    }
     host.appendChild(head);
 
     const plotsHost = document.createElement("div");
     plotsHost.className = "am-plots";
     host.appendChild(plotsHost);
 
-    const yTrue = r.y_test || [];
-    const yPred = r.y_pred_test || [];
+    if (isCls) {
+      appendSectionTitle(
+        plotsHost,
+        "A. Metrik train vs test",
+        "Sumbu X = jenis metrik / set data. Sumbu Y = nilai skor (0–1)."
+      );
+      const metricLabels = [];
+      const metricVals = [];
+      const metricColors = [];
+      [
+        ["Akurasi train", scores.accuracy_train, "#93c5fd"],
+        ["Akurasi test", scores.accuracy_test, "#2563eb"],
+        ["F1 test", scores.f1_test != null ? scores.f1_test : scores.f1_macro_test, "#16a34a"],
+        ["ROC-AUC train", scores.roc_auc_train, "#fcd34d"],
+        ["ROC-AUC test", scores.roc_auc_test, "#d97706"],
+        ["Bal.acc test", scores.balanced_accuracy_test, "#7c3aed"],
+      ].forEach(function (row) {
+        if (row[1] == null || !Number.isFinite(Number(row[1]))) return;
+        metricLabels.push(row[0]);
+        metricVals.push(Number(row[1]));
+        metricColors.push(row[2]);
+      });
+      if (metricLabels.length) {
+        const c = makeCanvas(560, 260);
+        drawBarChart(c, metricLabels, metricVals, {
+          colors: metricColors,
+          xLabel: "Metrik (X)",
+          yLabel: "Nilai skor (Y)",
+        });
+        plotsHost.appendChild(
+          plotBox(
+            "Ringkasan skor klasifikasi",
+            "X = nama metrik, Y = nilai. Bandingkan train (muda) vs test (tua) untuk mendeteksi overfitting.",
+            c
+          )
+        );
+      }
 
-    if (task === "classification") {
-      // accuracy train/test bars
-      if (scores.accuracy_train != null || scores.accuracy_test != null) {
-        const c = makeCanvas(420, 240);
-        drawBarChart(
-          c,
-          ["Train acc", "Test acc"],
-          [scores.accuracy_train || 0, scores.accuracy_test || 0]
-        );
-        plotsHost.appendChild(
-          plotBox("Accuracy train vs test", "Compare train and test accuracy to spot overfitting.", c)
-        );
-      }
-      // confusion matrix
       if (scores.confusion_matrix) {
+        appendSectionTitle(
+          plotsHost,
+          "B. Matriks kebingungan (Y aktual × Y prediksi)",
+          "Baris = kelas sebenarnya (Y aktual). Kolom = kelas yang diprediksi model (Y prediksi)."
+        );
         const cm = scores.confusion_matrix;
-        const labels = r.class_names || cm.map((_, i) => String(i));
-        const c = makeCanvas(Math.max(320, labels.length * 64 + 80), Math.max(280, labels.length * 48 + 80));
-        drawHeatmap(c, cm, labels, labels);
+        const labels = r.class_names || cm.map(function (_, i) { return String(i); });
+        const c = makeCanvas(Math.max(360, labels.length * 72 + 100), Math.max(300, labels.length * 56 + 90));
+        drawHeatmap(c, cm, labels, labels, {
+          xLabel: "Y prediksi (kelas)",
+          yLabel: "Y aktual (kelas)",
+        });
         plotsHost.appendChild(
-          plotBox("Confusion matrix", "Rows = actual class, columns = predicted class. Darker = more samples.", c)
+          plotBox(
+            "Confusion matrix — " + yName,
+            "Diagonal = prediksi benar. Di luar diagonal = kesalahan. Angka = jumlah sampel test.",
+            c
+          )
         );
       }
-      // classification report table
+
       if (scores.classification_report) {
         const rep = scores.classification_report;
         const tbl = document.createElement("div");
         tbl.className = "feature-box";
-        let html = "<h3>Classification report</h3><div class='table-scroll'><table class='automl-table'><thead><tr><th>Class</th><th>Precision</th><th>Recall</th><th>F1</th><th>Support</th></tr></thead><tbody>";
-        Object.keys(rep).forEach((k) => {
+        let html =
+          "<h3>Laporan per kelas</h3>" +
+          "<p class='micro'>Precision = ketepatan prediksi kelas itu. Recall = kelengkapan kelas itu tertangkap. F1 = gabungan keduanya. Support = jumlah sampel aktual.</p>" +
+          "<div class='table-scroll'><table class='automl-table'><thead><tr><th>Kelas (Y)</th><th>Precision</th><th>Recall</th><th>F1</th><th>Support</th></tr></thead><tbody>";
+        Object.keys(rep).forEach(function (k) {
           const row = rep[k];
           if (!row || typeof row !== "object" || row.precision == null) return;
           html +=
-            "<tr><td>" +
-            k +
-            "</td><td>" +
-            Number(row.precision).toFixed(3) +
-            "</td><td>" +
-            Number(row.recall).toFixed(3) +
-            "</td><td>" +
-            Number(row["f1-score"]).toFixed(3) +
-            "</td><td>" +
-            (row.support != null ? row.support : "") +
-            "</td></tr>";
+            "<tr><td>" + k + "</td><td>" + Number(row.precision).toFixed(3) +
+            "</td><td>" + Number(row.recall).toFixed(3) +
+            "</td><td>" + Number(row["f1-score"]).toFixed(3) +
+            "</td><td>" + (row.support != null ? row.support : "") + "</td></tr>";
         });
         html += "</tbody></table></div>";
         tbl.innerHTML = html;
         plotsHost.appendChild(tbl);
       }
 
-      // ROC / PR from worker plots (sklearn.metrics.roc_curve on model scores)
-      const plots = r.plots || {};
       if (plots.roc_curves && plots.roc_curves.length) {
-        const c = makeCanvas(440, 320);
-        drawCurve(c, plots.roc_curves, "fpr", "tpr", { diag: true });
+        appendSectionTitle(
+          plotsHost,
+          "C. Kurva ROC",
+          "X = False Positive Rate (kesalahan positif). Y = True Positive Rate (recall). Semakin ke kiri-atas semakin baik."
+        );
+        const c = makeCanvas(480, 360);
+        drawCurve(c, plots.roc_curves, "fpr", "tpr", {
+          diag: true,
+          xLabel: "False Positive Rate (X)",
+          yLabel: "True Positive Rate (Y)",
+        });
         plotsHost.appendChild(
-          plotBox("ROC curve (one-vs-rest)", "From model scores via sklearn.metrics.roc_curve. Dashed line = random.", c)
+          plotBox(
+            "ROC curve — " + yName,
+            "Garis putus-putus = tebak acak (AUC 0,5). AUC mendekati 1 = pemisahan kelas kuat.",
+            c
+          )
         );
       }
+
       if (plots.pr_curves && plots.pr_curves.length) {
-        const c = makeCanvas(440, 320);
+        appendSectionTitle(
+          plotsHost,
+          "D. Kurva Precision–Recall",
+          "Penting jika kelas tidak seimbang. X = Recall, Y = Precision."
+        );
+        const c = makeCanvas(480, 360);
         drawCurve(
           c,
           plots.pr_curves.map(function (s) {
@@ -452,115 +837,392 @@ function drawLineSeries(canvas, seriesList, opts) {
           }),
           "fpr",
           "tpr",
-          { diag: false }
-        );
-        plotsHost.appendChild(
-          plotBox("Precision–Recall curve", "Useful when classes are imbalanced. X = recall, Y = precision.", c)
-        );
-      }
-      if (plots.feature_importance && plots.feature_importance.length) {
-        const top = plots.feature_importance.slice(0, 20);
-        const c = makeCanvas(480, Math.max(240, top.length * 18 + 40));
-        drawBarChart(
-          c,
-          top.map(function (x) { return String(x.feature).slice(0, 14); }),
-          top.map(function (x) { return x.importance; })
+          { diag: false, xLabel: "Recall (X)", yLabel: "Precision (Y)" }
         );
         plotsHost.appendChild(
           plotBox(
-            "Feature importance",
-            "From the fitted model when the library/model exposes importances (gain / model attribute).",
+            "Precision–Recall — " + yName,
+            "X = recall (kelengkapan), Y = precision (ketepatan). Berguna saat kelas jarang.",
             c
           )
         );
       }
 
-      // class counts actual vs predicted
       if (yTrue.length && yPred.length) {
-        const labels = r.class_names || Array.from(new Set(yTrue.concat(yPred)));
-        const act = labels.map((l) => yTrue.filter((x) => String(x) === String(l)).length);
-        const pred = labels.map((l) => yPred.filter((x) => String(x) === String(l)).length);
-        const c = makeCanvas(480, 260);
-        // simple side-by-side: draw actual only with labels
-        drawBarChart(c, labels.map((l) => "A:" + String(l).slice(0, 6)), act);
-        plotsHost.appendChild(plotBox("Actual class counts", "How many test samples belong to each true class.", c));
-        const c2 = makeCanvas(480, 260);
-        drawBarChart(c2, labels.map((l) => "P:" + String(l).slice(0, 6)), pred, {
-          colors: labels.map(() => "#16a34a"),
+        appendSectionTitle(
+          plotsHost,
+          "E. Sebaran kelas aktual vs prediksi",
+          "Membandingkan distribusi Y aktual dan Y prediksi pada set test."
+        );
+        const labels = r.class_names || Array.from(new Set(yTrue.concat(yPred).map(String)));
+        const act = labels.map(function (l) {
+          return yTrue.filter(function (x) { return String(x) === String(l); }).length;
         });
-        plotsHost.appendChild(plotBox("Predicted class counts", "How many test samples the model assigned to each class.", c2));
+        const pred = labels.map(function (l) {
+          return yPred.filter(function (x) { return String(x) === String(l); }).length;
+        });
+        const c = makeCanvas(520, 260);
+        drawBarChart(c, labels.map(function (l) { return "Aktual " + String(l).slice(0, 8); }), act, {
+          xLabel: "Kelas Y aktual (X)",
+          yLabel: "Jumlah sampel (Y)",
+          digits: 0,
+        });
+        plotsHost.appendChild(plotBox("Jumlah kelas aktual", "X = kelas sebenarnya, Y = banyaknya baris test.", c));
+        const c2 = makeCanvas(520, 260);
+        drawBarChart(c2, labels.map(function (l) { return "Pred " + String(l).slice(0, 8); }), pred, {
+          colors: labels.map(function () { return "#16a34a"; }),
+          xLabel: "Kelas Y prediksi (X)",
+          yLabel: "Jumlah sampel (Y)",
+          digits: 0,
+        });
+        plotsHost.appendChild(plotBox("Jumlah kelas prediksi", "X = kelas hasil model, Y = banyaknya prediksi.", c2));
+      }
+
+      // probability histogram for binary if available
+      if (r.y_proba_test && yTrue.length) {
+        let proba = r.y_proba_test;
+        // may be 1d scores or 2d
+        let pos = [];
+        if (Array.isArray(proba[0])) {
+          pos = proba.map(function (row) { return Number(row[row.length - 1]); });
+        } else {
+          pos = proba.map(Number);
+        }
+        if (pos.length && pos.every(function (v) { return Number.isFinite(v); })) {
+          appendSectionTitle(
+            plotsHost,
+            "F. Distribusi skor / probabilitas kelas positif",
+            "X = nilai skor model (mendekati 1 = lebih yakin kelas positif). Y = frekuensi sampel test."
+          );
+          const bins = 10;
+          const counts = Array(bins).fill(0);
+          const labelsP = [];
+          for (let i = 0; i < bins; i++) labelsP.push((i / bins).toFixed(1) + "–" + ((i + 1) / bins).toFixed(1));
+          pos.forEach(function (v) {
+            let b = Math.floor(Math.min(0.9999, Math.max(0, v)) * bins);
+            counts[b]++;
+          });
+          const c = makeCanvas(520, 260);
+          drawBarChart(c, labelsP, counts, {
+            xLabel: "Skor / probabilitas (X)",
+            yLabel: "Jumlah sampel (Y)",
+            digits: 0,
+          });
+          plotsHost.appendChild(
+            plotBox(
+              "Histogram skor prediksi",
+              "Puncak di kiri/kanan yang terpisah = model yakin membedakan kelas.",
+              c
+            )
+          );
+        }
       }
     } else {
-      // regression plots
-      const yt = yTrue.map(Number);
-      const yp = yPred.map(Number);
-      if (yt.length && yp.length) {
-        const c = makeCanvas(420, 320);
-        drawScatter(c, yt, yp, { diag: true });
+      // ---------------- regression ----------------
+      const yt = yTrue.map(Number).filter(function (v, i) { return Number.isFinite(v) && Number.isFinite(Number(yPred[i])); });
+      const yp = yPred.map(Number).filter(function (v, i) { return Number.isFinite(v) && Number.isFinite(Number(yTrue[i])); });
+      // rebuild aligned
+      const yt2 = [];
+      const yp2 = [];
+      for (let i = 0; i < yTrue.length; i++) {
+        const a = Number(yTrue[i]), b = Number(yPred[i]);
+        if (Number.isFinite(a) && Number.isFinite(b)) {
+          yt2.push(a);
+          yp2.push(b);
+        }
+      }
+
+      appendSectionTitle(
+        plotsHost,
+        "A. Metrik regresi train vs test",
+        "Sumbu X = jenis metrik. Sumbu Y = nilai (R² 0–1; RMSE/MAE dalam satuan Y)."
+      );
+      const regBars = [];
+      if (scores.r2_train != null) regBars.push(["R² train", scores.r2_train, "#93c5fd"]);
+      if (scores.r2_test != null) regBars.push(["R² test", scores.r2_test, "#2563eb"]);
+      if (scores.rmse_test != null) regBars.push(["RMSE test", scores.rmse_test, "#dc2626"]);
+      if (scores.mae_test != null) regBars.push(["MAE test", scores.mae_test, "#ea580c"]);
+      if (regBars.length) {
+        const c = makeCanvas(480, 260);
+        drawBarChart(
+          c,
+          regBars.map(function (x) { return x[0]; }),
+          regBars.map(function (x) { return Number(x[1]); }),
+          {
+            colors: regBars.map(function (x) { return x[2]; }),
+            xLabel: "Metrik (X)",
+            yLabel: "Nilai (Y)",
+          }
+        );
         plotsHost.appendChild(
           plotBox(
-            "Actual vs predicted",
-            "Each point is a test sample. The dashed line is perfect prediction. R² = " +
-              (scores.r2_test != null ? Number(scores.r2_test).toFixed(4) : "—"),
+            "Ringkasan skor regresi",
+            "R² semakin tinggi semakin baik. RMSE/MAE semakin rendah semakin baik (satuannya sama dengan " + yName + ").",
             c
           )
         );
-        const c2 = makeCanvas(520, 260);
-        drawLineSeries(c2, [
-          { name: "actual", values: yt.slice(0, 200) },
-          { name: "predicted", values: yp.slice(0, 200) },
-        ]);
-        plotsHost.appendChild(
-          plotBox("Test vs predicted by sample", "Blue = actual, red = predicted (first 200 test rows).", c2)
+      }
+
+      if (yt2.length && yp2.length) {
+        appendSectionTitle(
+          plotsHost,
+          "B. Y aktual vs Y prediksi",
+          "Setiap titik = satu baris test. Idealnya titik menempel garis putus-putus (prediksi = aktual)."
         );
-        const resid = yt.map((v, i) => v - yp[i]);
-        const c3 = makeCanvas(420, 320);
-        drawScatter(c3, yp, resid, { diag: false });
+        const c = makeCanvas(440, 400);
+        drawScatter(c, yt2, yp2, {
+          diag: true,
+          sharedScale: true,
+          xLabel: "Y aktual — " + yName + " (X)",
+          yLabel: "Y prediksi (Y)",
+        });
         plotsHost.appendChild(
-          plotBox("Residuals vs predicted", "Residuals should scatter around zero without a clear pattern.", c3)
+          plotBox(
+            "Aktual vs prediksi",
+            "X = nilai sebenarnya, Y = keluaran model. R² test = " + fmtScore(scores.r2_test) + ".",
+            c
+          )
         );
-        // residual histogram (simple bins)
-        const c4 = makeCanvas(420, 240);
+
+        appendSectionTitle(
+          plotsHost,
+          "C. Deret sampel: aktual & prediksi",
+          "X = urutan sampel test. Y = nilai " + yName + ". Biru = aktual, merah = prediksi."
+        );
+        const c2 = makeCanvas(560, 280);
+        drawLineSeries(
+          c2,
+          [
+            { name: "Y aktual", values: yt2.slice(0, 250) },
+            { name: "Y prediksi", values: yp2.slice(0, 250) },
+          ],
+          { xLabel: "Indeks sampel test (X)", yLabel: yName + " (Y)" }
+        );
+        plotsHost.appendChild(
+          plotBox(
+            "Perbandingan per sampel",
+            "Jika garis merah mengikuti biru, model menangkap pola dengan baik.",
+            c2
+          )
+        );
+
+        const resid = yt2.map(function (v, i) { return v - yp2[i]; });
+        const absErr = resid.map(function (v) { return Math.abs(v); });
+
+        appendSectionTitle(
+          plotsHost,
+          "D. Residual (error)",
+          "Residual = Y aktual − Y prediksi. Pola acak di sekitar 0 = bagus; pola lengkung = bias model."
+        );
+        const c3 = makeCanvas(440, 360);
+        drawScatter(c3, yp2, resid, {
+          zeroY: true,
+          xLabel: "Y prediksi (X)",
+          yLabel: "Residual = aktual − prediksi (Y)",
+        });
+        plotsHost.appendChild(
+          plotBox(
+            "Residual vs prediksi",
+            "X = prediksi model, Y = error. Sebaran horizontal di sekitar 0 tanpa bentuk jelas = residual sehat.",
+            c3
+          )
+        );
+
+        const c3b = makeCanvas(440, 360);
+        drawScatter(c3b, yt2, resid, {
+          zeroY: true,
+          xLabel: "Y aktual (X)",
+          yLabel: "Residual (Y)",
+        });
+        plotsHost.appendChild(
+          plotBox(
+            "Residual vs aktual",
+            "X = nilai sebenarnya, Y = error. Membantu melihat apakah error membesar di rentang Y tertentu.",
+            c3b
+          )
+        );
+
+        const c4 = makeCanvas(480, 260);
         const bins = 12;
-        let rmin = Math.min(...resid), rmax = Math.max(...resid);
+        let rmin = Math.min.apply(null, resid), rmax = Math.max.apply(null, resid);
         if (rmin === rmax) { rmin -= 1; rmax += 1; }
         const counts = Array(bins).fill(0);
-        resid.forEach((v) => {
+        const binLabels = [];
+        for (let i = 0; i < bins; i++) {
+          const a = rmin + ((rmax - rmin) * i) / bins;
+          const b = rmin + ((rmax - rmin) * (i + 1)) / bins;
+          binLabels.push(a.toFixed(1));
+          void b;
+        }
+        resid.forEach(function (v) {
           let b = Math.floor(((v - rmin) / (rmax - rmin)) * bins);
           if (b >= bins) b = bins - 1;
           if (b < 0) b = 0;
           counts[b]++;
         });
-        drawBarChart(
-          c4,
-          counts.map((_, i) => String(i)),
-          counts
+        drawBarChart(c4, binLabels, counts, {
+          xLabel: "Nilai residual (X)",
+          yLabel: "Frekuensi (Y)",
+          digits: 0,
+        });
+        plotsHost.appendChild(
+          plotBox(
+            "Histogram residual",
+            "X = besar error, Y = berapa sering. Idealnya berbentuk lonceng di sekitar 0.",
+            c4
+          )
         );
-        plotsHost.appendChild(plotBox("Residual distribution", "Histogram of prediction errors on the test set.", c4));
-      }
-      if (scores.r2_train != null || scores.r2_test != null) {
-        const c = makeCanvas(360, 220);
-        drawBarChart(c, ["R² train", "R² test"], [scores.r2_train || 0, scores.r2_test || 0]);
-        plotsHost.appendChild(plotBox("Train vs test R²", "Overfitting check for regression.", c));
+
+        const c5 = makeCanvas(440, 360);
+        drawScatter(c5, yp2, absErr, {
+          xLabel: "Y prediksi (X)",
+          yLabel: "|Error| absolut (Y)",
+        });
+        plotsHost.appendChild(
+          plotBox(
+            "Error absolut vs prediksi",
+            "X = prediksi, Y = |aktual − prediksi|. Membantu melihat di mana model paling meleset.",
+            c5
+          )
+        );
       }
     }
 
-    // optimization history if present
-    if (Array.isArray(r.history) && r.history.length) {
-      const vals = r.history.map((t) => (t.value != null ? Number(t.value) : NaN)).filter((v) => isFinite(v));
+    // Feature importance (both tasks)
+    if (plots.feature_importance && plots.feature_importance.length) {
+      appendSectionTitle(
+        plotsHost,
+        isCls ? "G. Importance fitur (X)" : "E. Importance fitur (X)",
+        "Seberapa besar tiap kolom X berkontribusi ke prediksi Y menurut model."
+      );
+      const top = plots.feature_importance.slice(0, 20);
+      const c = makeCanvas(520, Math.max(260, top.length * 22 + 50));
+      drawHBarChart(
+        c,
+        top.map(function (x) { return String(x.feature); }),
+        top.map(function (x) { return x.importance; }),
+        { xLabel: "Importance (X)", yLabel: "Nama fitur" }
+      );
+      plotsHost.appendChild(
+        plotBox(
+          "Feature importance",
+          "Batang lebih panjang = fitur X lebih berpengaruh ke Y. Berguna untuk interpretasi lapangan.",
+          c
+        )
+      );
+    }
+
+    // Loss (unit) vs number of training epochs / trials
+    let curve = r.training_curve;
+    if ((!curve || !curve.loss || !curve.loss.length) && Array.isArray(r.history) && r.history.length) {
+      // Client-side fallback if worker didn't emit training_curve
+      const metricVals = [];
+      r.history.forEach(function (t) {
+        const raw = t && (t.value != null ? t.value : t.loss);
+        const v = Number(raw);
+        if (Number.isFinite(v)) metricVals.push(v);
+      });
+      if (metricVals.length) {
+        const loss = metricVals.map(function (v) {
+          if (isCls && v >= 0 && v <= 1) return 1 - v;
+          if (isCls) return -v;
+          return v;
+        });
+        const best = [];
+        let cur = Infinity;
+        loss.forEach(function (v) {
+          if (v < cur) cur = v;
+          best.push(cur);
+        });
+        curve = {
+          epochs: metricVals.map(function (_, i) { return i + 1; }),
+          loss: loss,
+          best_loss: best,
+          metric: metricVals,
+          note: "Dibangun di klien dari riwayat trial Optuna.",
+        };
+      }
+    }
+    if (curve && Array.isArray(curve.loss) && curve.loss.length) {
+      appendSectionTitle(
+        plotsHost,
+        "Loss (unit) vs number of training epochs",
+        (curve.note ||
+          "AutoML memakai trial hyperparameter sebagai langkah training. X = epoch/trial, Y = loss.") +
+          " Kurva best-so-far menunjukkan loss terbaik sampai epoch tersebut."
+      );
+      const cLoss = makeCanvas(560, 280);
+      drawLineSeries(
+        cLoss,
+        [
+          { name: "Loss per epoch/trial", values: curve.loss },
+          { name: "Best loss so far", values: curve.best_loss || curve.loss },
+        ],
+        {
+          xLabel: "Number of training epochs / trials (X)",
+          yLabel: "Loss (unit) (Y, ↓ lebih baik)",
+        }
+      );
+      plotsHost.appendChild(
+        plotBox(
+          "Loss vs training epochs",
+          "Sumbu X = nomor epoch/trial, sumbu Y = loss. Idealnya loss (dan best loss) menurun seiring training.",
+          cLoss
+        )
+      );
+      if (Array.isArray(curve.metric) && curve.metric.length) {
+        const cMet = makeCanvas(560, 240);
+        drawLineSeries(
+          cMet,
+          [{ name: isCls ? "CV score (↑)" : "CV MSE (↓)", values: curve.metric }],
+          {
+            xLabel: "Epoch / trial (X)",
+            yLabel: isCls ? "Skor CV (Y)" : "MSE CV (Y)",
+          }
+        );
+        plotsHost.appendChild(
+          plotBox(
+            "Metrik CV per trial",
+            isCls
+              ? "Skor validasi silang mentah (mis. ROC-AUC / balanced accuracy)."
+              : "MSE validasi silang mentah per trial.",
+            cMet
+          )
+        );
+      }
+    } else if (Array.isArray(r.history) && r.history.length) {
+      const vals = r.history
+        .map(function (t) { return t.value != null ? Number(t.value) : NaN; })
+        .filter(function (v) { return isFinite(v); });
       if (vals.length) {
-        const c = makeCanvas(480, 220);
-        drawLineSeries(c, [{ name: "score", values: vals }]);
-        plotsHost.appendChild(plotBox("Optimization history", "Score for each trial (higher or lower depends on metric).", c));
+        appendSectionTitle(
+          plotsHost,
+          "Riwayat optimasi hyperparameter",
+          isCls
+            ? "X = nomor trial. Y = skor CV: semakin tinggi semakin baik."
+            : "X = nomor trial. Y = skor CV (MSE): semakin rendah semakin baik."
+        );
+        const c = makeCanvas(520, 240);
+        drawLineSeries(c, [{ name: isCls ? "CV score" : "MSE CV", values: vals }], {
+          xLabel: "Trial ke- (X)",
+          yLabel: isCls ? "Skor CV (Y)" : "MSE (Y)",
+        });
+        plotsHost.appendChild(
+          plotBox(
+            "Optimization history",
+            "Setiap titik = satu percobaan parameter saat tuning.",
+            c
+          )
+        );
       }
     }
 
     const zipBtn = document.createElement("button");
     zipBtn.type = "button";
     zipBtn.className = "btn";
-    zipBtn.textContent = "Download all plot canvases (one by one PNG)";
-    zipBtn.onclick = () => {
-      plotsHost.querySelectorAll("canvas").forEach((cv, i) => {
+    zipBtn.textContent = "Unduh semua plot (PNG satu per satu)";
+    zipBtn.onclick = function () {
+      plotsHost.querySelectorAll("canvas").forEach(function (cv, i) {
         downloadCanvas(cv, "automl_plot_" + (i + 1), "png");
       });
     };
@@ -609,7 +1271,10 @@ function drawLineSeries(canvas, seriesList, opts) {
     const feats = inputFeatures();
     while (state.predRows.length < n) {
       const o = {};
-      feats.forEach((f) => (o[f] = ""));
+      feats.forEach((f) => {
+        const info = featureInfo(f);
+        o[f] = info.default != null && info.default !== "" ? info.default : "";
+      });
       state.predRows.push(o);
     }
     // strip target from existing rows if present
@@ -617,7 +1282,12 @@ function drawLineSeries(canvas, seriesList, opts) {
     state.predRows.forEach((row) => {
       if (y && Object.prototype.hasOwnProperty.call(row, y)) delete row[y];
       feats.forEach((f) => {
-        if (row[f] === undefined) row[f] = "";
+        if (row[f] === undefined || row[f] === "") {
+          const info = featureInfo(f);
+          if (row[f] === undefined || (row[f] === "" && info.kind === "categorical" && info.categories.length)) {
+            row[f] = info.default != null ? info.default : "";
+          }
+        }
       });
     });
   }
@@ -628,38 +1298,62 @@ function drawLineSeries(canvas, seriesList, opts) {
 
     if (state.step === 1) {
       host.innerHTML =
-        '<section class="feature-box"><h2>Step 1 — Import CSV</h2>' +
-        '<p class="micro">Upload a new file, or pick one already saved in the app uploads folder (<code>migas_data/uploads</code>).</p>' +
+        '<section class="feature-box am-skip-box">' +
+        "<h2>Sudah punya model tersimpan?</h2>" +
+        "<p class='am-hero'>Langsung ke <b>langkah 7</b> untuk memuat model yang sudah dilatih — tanpa unggah CSV atau latih ulang.</p>" +
         '<div class="row-actions">' +
-        '<label class="dropzone" id="automl-drop"><strong>Drop CSV here or click to upload</strong>' +
-        '<input id="automl-file" type="file" accept=".csv,text/csv" hidden /></label>' +
-        '</div>' +
-        '<h3>Files already on this PC (uploads folder)</h3>' +
-        '<div class="row-actions"><button type="button" class="btn ghost" id="am-refresh-uploads">Refresh list</button></div>' +
+        '<button type="button" class="btn am-primary" id="am-jump-7">Lompat ke langkah 7 → Muat model</button> ' +
+        '<button type="button" class="btn ghost" id="am-jump-8">Lompat ke langkah 8 → Prediksi</button> ' +
+        '<button type="button" class="btn ghost" id="am-refresh-saved-models">Segarkan daftar model</button>' +
+        "</div>" +
+        '<div id="am-saved-models-home" class="storage-file-list"></div>' +
+        '<p class="micro">Atau lanjut unggah CSV di bawah untuk melatih model baru.</p>' +
+        "</section>" +
+        '<section class="feature-box"><h2>Langkah 1 — Impor CSV (latih baru)</h2>' +
+        '<p class="micro">Mode lokal: jalankan <b>Start_Migas.bat</b> (biarkan jendela itu tetap terbuka), lalu unggah CSV di sini. Default API: <code>http://127.0.0.1:5055</code>.</p>' +
+        '<p class="am-busy" id="am-api-banner">Memeriksa server lokal…</p>' +
+        '<label class="dropzone am-dropzone" id="automl-drop">' +
+        '<input id="automl-file" type="file" accept=".csv,text/csv,application/vnd.ms-excel" />' +
+        "<strong>Seret CSV ke sini, atau klik untuk memilih file</strong>" +
+        "<span>Menerima .csv (koma, titik koma, atau tab)</span></label>" +
+        '<h3>File di folder uploads</h3>' +
+        '<div class="row-actions"><button type="button" class="btn ghost" id="am-refresh-uploads">Segarkan daftar</button></div>' +
         '<div id="am-upload-list" class="storage-file-list"></div>' +
         '<div id="automl-preview"></div></section>';
       wireUpload();
       refreshUploadList();
+      probeLocalApi();
+      wireHomeModelShortcut();
       if (state.head.length) showPreview();
       return;
     }
 
     if (state.step === 2) {
       detectTask();
+      const taskLabel = state.task === "classification" ? "Klasifikasi" : "Regresi";
       host.innerHTML =
-        '<section class="feature-box"><h2>Step 2 — Choose target (Y) and inputs (X)</h2>' +
-        '<p class="micro">Exactly one Y. Any number of X. Task is detected automatically.</p>' +
-        '<div class="row-actions"><button type="button" class="btn ghost" id="am-select-all-x">Select all as X</button>' +
-        '<button type="button" class="btn ghost" id="am-clear-x">Clear</button></div>' +
-        '<p><span class="automl-badge">Task: ' + state.task + "</span></p>" +
-        (state.task === "regression"
-          ? '<label class="check-line"><input type="checkbox" id="am-force-cls" /> Treat numeric Y as Classification</label>'
-          : "") +
-        '<div class="table-scroll"><table class="automl-table"><thead><tr><th>X</th><th>Y</th><th>Column</th><th>Type</th><th>Missing</th></tr></thead><tbody>' +
+        '<section class="feature-box"><h2>Langkah 2 — Pilih target (Y) dan input (X)</h2>' +
+        '<p class="micro">Pilih tepat satu Y (yang diprediksi) dan satu atau lebih X (fitur). Jenis masalah dideteksi otomatis ala AutoGluon, bisa diganti manual.</p>' +
+        '<div class="row-actions"><button type="button" class="btn ghost" id="am-select-all-x">Pilih semua sebagai X</button>' +
+        '<button type="button" class="btn ghost" id="am-clear-x">Kosongkan X</button></div>' +
+        '<div class="am-task-box">' +
+        '<p><span class="automl-badge">Jenis: ' + taskLabel + "</span></p>" +
+        '<p class="micro">' + (state.taskReason || "") + "</p>" +
+        '<div class="row-actions">' +
+        '<label class="check-line"><input type="radio" name="am-task" value="classification" ' +
+        (state.task === "classification" ? "checked" : "") +
+        '/> Klasifikasi <span class="micro">(kategori / ya-tidak / kelas)</span></label>' +
+        '<label class="check-line"><input type="radio" name="am-task" value="regression" ' +
+        (state.task === "regression" ? "checked" : "") +
+        '/> Regresi <span class="micro">(angka kontinu, mis. ROP, pressure)</span></label>' +
+        "</div></div>" +
+        '<div class="table-scroll"><table class="automl-table"><thead><tr><th>X</th><th>Y</th><th>Kolom</th><th>Tipe</th><th>Unik</th><th>Kosong</th><th>Saran jika Y</th></tr></thead><tbody>' +
         state.columns
           .map((c) => {
             const isY = state.target === c.name;
             const isX = state.features.includes(c.name);
+            const uniq = c.n_unique != null ? c.n_unique : "—";
+            const sug = c.suggested_task === "classification" ? "klasifikasi" : c.suggested_task === "regression" ? "regresi" : "—";
             return (
               "<tr><td><input type='checkbox' data-x='" +
               c.name +
@@ -678,7 +1372,11 @@ function drawLineSeries(canvas, seriesList, opts) {
               "</td><td>" +
               c.type +
               "</td><td>" +
+              uniq +
+              "</td><td>" +
               c.missing +
+              "</td><td>" +
+              sug +
               "</td></tr>"
             );
           })
@@ -689,38 +1387,119 @@ function drawLineSeries(canvas, seriesList, opts) {
     }
 
     if (state.step === 3) {
+      const mode = state.splitMode === "files" ? "files" : "auto";
       host.innerHTML =
-        '<section class="feature-box"><h2>Step 3 — Feature engineering (DataPrepare)</h2>' +
-        '<p class="micro">Uses AutoML-Alex <code>DataPrepare.fit_transform</code> on train and <code>transform</code> on test during training.</p>' +
-        '<label>Test size <input id="am-test-size" type="number" min="0.05" max="0.5" step="0.05" value="' +
+        '<section class="feature-box"><h2>Langkah 3 — Persiapan data &amp; split</h2>' +
+        '<p class="micro">Preprocessing (<code>DataPrepare</code>) hanya di-<b>fit</b> pada train, lalu <b>transform</b> ke test — mencegah kebocoran data.</p>' +
+        '<div class="am-split-modes">' +
+        '<label class="check-line"><input type="radio" name="am-split-mode" value="auto" ' +
+        (mode === "auto" ? "checked" : "") +
+        "/> <b>Acak train/test</b> dari CSV langkah 1</label>" +
+        '<label class="check-line"><input type="radio" name="am-split-mode" value="files" ' +
+        (mode === "files" ? "checked" : "") +
+        "/> <b>Unggah CSV terpisah</b> untuk train &amp; test</label>" +
+        "</div>" +
+        '<div id="am-split-auto" ' +
+        (mode === "auto" ? "" : "hidden") +
+        ">" +
+        '<label>Proporsi test (hold-out) <input id="am-test-size" type="number" min="0.05" max="0.5" step="0.05" value="' +
         state.testSize +
         '"/></label>' +
         '<label>Random seed <input id="am-seed" type="number" value="' +
         state.randomState +
         '"/></label>' +
-        '<details class="fold"><summary>Advanced</summary>' +
-        '<p class="micro">Interaction features are turned off by default for speed and RAM. Defaults work without changes.</p></details>' +
+        '<p class="micro">Saran: 0,2 (20%) test. Seed tetap = hasil bisa diulang.</p>' +
+        "</div>" +
+        '<div id="am-split-files" ' +
+        (mode === "files" ? "" : "hidden") +
+        ">" +
+        '<p class="micro">Kolom harus sama dengan X/Y di langkah 2 (termasuk nama target). Boleh memakai file langkah 1 sebagai train.</p>' +
+        '<div class="am-split-upload-grid">' +
+        '<div class="am-s8-card">' +
+        "<h3>Train CSV</h3>" +
+        '<p class="micro" id="am-train-file-info">' +
+        (state.trainUploadId
+          ? "Aktif: <b>" +
+            (state.trainFileName || state.trainUploadId) +
+            "</b>" +
+            (state.trainMeta ? " · " + state.trainMeta.rows + " baris" : "")
+          : state.uploadId
+            ? "Default: file langkah 1 (<b>" +
+              (state.sourceName || state.uploadId) +
+              "</b>) — atau unggah pengganti."
+            : "Belum ada file train.") +
+        "</p>" +
+        '<label class="dropzone am-dropzone am-dropzone-sm">' +
+        '<input id="am-train-file" type="file" accept=".csv,text/csv" />' +
+        "<strong>Pilih / seret train.csv</strong></label>" +
+        '<div class="row-actions">' +
+        '<button type="button" class="btn ghost" id="am-train-use-step1">Pakai file langkah 1</button>' +
+        "</div></div>" +
+        '<div class="am-s8-card">' +
+        "<h3>Test CSV</h3>" +
+        '<p class="micro" id="am-test-file-info">' +
+        (state.testUploadId
+          ? "Aktif: <b>" +
+            (state.testFileName || state.testUploadId) +
+            "</b>" +
+            (state.testMeta ? " · " + state.testMeta.rows + " baris" : "")
+          : "Wajib unggah file test (hold-out).") +
+        "</p>" +
+        '<label class="dropzone am-dropzone am-dropzone-sm">' +
+        '<input id="am-test-file" type="file" accept=".csv,text/csv" />' +
+        "<strong>Pilih / seret test.csv</strong></label>" +
+        "</div></div>" +
+        '<label>Random seed (encoding / sampling) <input id="am-seed" type="number" value="' +
+        state.randomState +
+        '"/></label>' +
+        "</div>" +
+        '<details class="fold"><summary>Lanjutan</summary>' +
+        '<p class="micro">Fitur interaksi dimatikan default agar cepat &amp; hemat RAM. Encoding kategori + pembersihan kolom konstan dijalankan otomatis saat training.</p></details>' +
         "</section>";
+      wireStep3();
       return;
     }
 
     if (state.step === 4) {
-      const models = ["LightGBM", "XGBoost", "LinearModel", "CatBoost", "RandomForest", "ExtraTrees", "KNeighbors"];
+      // All names exist in automl-alex 1.6 all_models and support both clf + reg wrappers.
+      const modelMeta = [
+        { id: "LightGBM", ok: "baik", note: "Stabil & cepat — disarankan (clf + reg)" },
+        { id: "CatBoost", ok: "baik", note: "Kuat untuk tabular — disarankan (clf + reg)" },
+        { id: "RandomForest", ok: "baik", note: "Stabil, interpretable (clf + reg)" },
+        { id: "ExtraTrees", ok: "baik", note: "Mirip RF, sering kompetitif (clf + reg)" },
+        { id: "XGBoost", ok: "hati-hati", note: "Bagus; di regresi beberapa trial bisa gagal (ditangkap Optuna)" },
+        { id: "LinearModel", ok: "hati-hati", note: "Butuh normalisasi (otomatis). Cocok baseline linear" },
+        { id: "KNeighbors", ok: "lemah", note: "Sensitif skala; sering gagal di data kecil / sparse" },
+        { id: "MLP", ok: "lemah", note: "Butuh normalisasi; lambat, jarang menang di tabular kecil" },
+      ];
+      const taskNote =
+        state.task === "classification"
+          ? "Klasifikasi biner: BestSingleModelClassifier (metrik ROC-AUC). ≥3 kelas: LightGBM + Optuna (balanced accuracy) — daftar di bawah hanya untuk biner/regresi."
+          : "Regresi: BestSingleModelRegressor (optimasi MSE; laporan RMSE / MAE / R²).";
       host.innerHTML =
-        '<section class="feature-box"><h2>Step 4 — Choose models (BestSingleModel)</h2>' +
-        '<p class="micro">Classification uses BestSingleModelClassifier; regression uses BestSingleModelRegressor. Multiclass uses LightGBM when needed.</p>' +
-        '<div class="row-actions"><button type="button" class="btn ghost" id="am-models-all">Select all</button></div>' +
-        models
+        '<section class="feature-box"><h2>Langkah 4 — Pilih kandidat model</h2>' +
+        '<p class="micro">' + taskNote + "</p>" +
+        '<p class="micro">Centang model yang mau dibandingkan. Yang <b>baik</b> aman untuk klasifikasi dan regresi. AutoML memilih yang terbaik dalam batas waktu.</p>' +
+        '<div class="row-actions"><button type="button" class="btn ghost" id="am-models-default">Default disarankan</button> ' +
+        '<button type="button" class="btn ghost" id="am-models-safe">Hanya yang baik</button> ' +
+        '<button type="button" class="btn ghost" id="am-models-all">Pilih semua</button></div>' +
+        modelMeta
           .map((m) => {
-            const on = state.models.includes(m);
+            const on = state.models.includes(m.id);
+            const badge =
+              m.ok === "baik" ? "✓ baik" : m.ok === "hati-hati" ? "~ hati-hati" : "! lemah";
             return (
               "<label class='check-line'><input type='checkbox' data-model='" +
-              m +
+              m.id +
               "' " +
               (on ? "checked" : "") +
-              "/> " +
-              m +
-              "</label>"
+              "/> <b>" +
+              m.id +
+              "</b> <span class='automl-badge'>" +
+              badge +
+              "</span><br/><span class='micro'>" +
+              m.note +
+              "</span></label>"
             );
           })
           .join("") +
@@ -731,7 +1510,7 @@ function drawLineSeries(canvas, seriesList, opts) {
 
     if (state.step === 5) {
       host.innerHTML =
-        '<section class="feature-box"><h2>Step 5 — Optimization (model.opt)</h2>' +
+        '<section class="feature-box"><h2>Langkah 5 — Optimasi (model.opt)</h2>' +
         '<label>Time budget (seconds) <input id="am-timeout" type="number" min="30" value="' +
         state.timeout +
         '"/></label>' +
@@ -754,17 +1533,19 @@ function drawLineSeries(canvas, seriesList, opts) {
 
     if (state.step === 7) {
       host.innerHTML =
-        '<section class="feature-box"><h2>Step 7 — Save / load model</h2>' +
-        '<p class="micro">Models are stored in <code>migas_data/ml_model/</code>. After training once, <b>load a model here and jump to Predict</b> — you do not need to retrain.</p>' +
-        "<p>Active model: <b>" +
+        '<section class="feature-box"><h2>Langkah 7 — Muat model tersimpan</h2>' +
+        '<p class="am-hero">Pilih model yang sudah dilatih. <b>Tidak perlu unggah CSV atau latih ulang</b> — langsung prediksi di langkah 8.</p>' +
+        '<p class="micro">Model disimpan di <code>migas_data/ml_model/</code>.</p>' +
+        "<p>Model aktif: <b>" +
         ((state.result && state.result.model_file) || "—") +
         "</b>" +
-        (state.result && state.result.task ? " · task: " + state.result.task : "") +
+        (state.result && state.result.task ? " · " + (state.result.task === "classification" ? "klasifikasi" : "regresi") : "") +
         (state.result && state.result.target ? " · Y: " + state.result.target : "") +
         "</p>" +
         '<div class="row-actions">' +
-        '<button type="button" class="btn ghost" id="am-list-models">Refresh list</button>' +
-        '<button type="button" class="btn" id="am-goto-predict">Go to Predict →</button>' +
+        '<button type="button" class="btn ghost" id="am-list-models">Segarkan daftar</button>' +
+        '<button type="button" class="btn am-primary" id="am-goto-predict">Lanjut ke Prediksi →</button>' +
+        '<button type="button" class="btn ghost" id="am-back-train">← Latih model baru</button>' +
         "</div>" +
         '<div id="am-models"></div></section>';
       wireStep7();
@@ -774,44 +1555,19 @@ function drawLineSeries(canvas, seriesList, opts) {
     // Step 8 — Predict (beginner-first UI)
     if (!state.result || !state.result.model_file) {
       host.innerHTML =
-        '<section class="feature-box"><h2>Step 8 — Predict</h2>' +
-        '<p class="am-hero">Load a <b>saved model</b> first. No need to retrain if you already finished Step 6 once.</p>' +
-        '<button type="button" class="btn" id="am-s8-refresh-models">Show saved models</button>' +
-        '<div id="am-models"></div>' +
-        '<p class="micro">Or go to Step 7. After you click a model, this page will unlock.</p></section>';
+        '<section class="feature-box"><h2>Langkah 8 — Prediksi</h2>' +
+        '<p class="am-hero">Pilih <b>model tersimpan</b> di bawah. Tidak perlu unggah CSV atau latih ulang.</p>' +
+        '<div class="row-actions">' +
+        '<button type="button" class="btn ghost" id="am-s8-refresh-models">Segarkan daftar model</button> ' +
+        '<button type="button" class="btn ghost" id="am-s8-goto-7">Ke langkah 7</button>' +
+        "</div>" +
+        '<div id="am-models"></div></section>';
       const b = document.getElementById("am-s8-refresh-models");
-      if (b) {
-        b.addEventListener("click", () => {
-          // reuse step 7 list wiring
-          setStep(7);
-        });
-      }
-      // still allow listing here
-      (async () => {
-        try {
-          const base = apiBase();
-          const res = await fetch(base + "/api/models", { headers: headers(false) });
-          const data = await res.json();
-          const h = document.getElementById("am-models");
-          if (!h || !data.ok) return;
-          h.innerHTML = (data.files || [])
-            .map(
-              (f) =>
-                '<button type="button" class="storage-file" data-model="' +
-                f.name +
-                '"><strong>' +
-                f.name +
-                "</strong></button>"
-            )
-            .join("") || "<p class='micro'>No saved models.</p>";
-          h.querySelectorAll("[data-model]").forEach((btn) => {
-            btn.addEventListener("click", async () => {
-              await loadModelForPredict(btn.getAttribute("data-model"));
-              setStep(8);
-            });
-          });
-        } catch (e) {}
-      })();
+      const g7 = document.getElementById("am-s8-goto-7");
+      const h = document.getElementById("am-models");
+      if (b) b.addEventListener("click", function () { renderSavedModelButtons(h, { goPredict: true }); });
+      if (g7) g7.addEventListener("click", function () { setStep(7); });
+      renderSavedModelButtons(h, { goPredict: true });
       return;
     }
     ensurePredRows(Math.max(1, state.predRows.length));
@@ -846,7 +1602,7 @@ function drawLineSeries(canvas, seriesList, opts) {
 
     host.innerHTML =
       '<section class="feature-box am-step8">' +
-      '<h2>Step 8 — Get a prediction</h2>' +
+      '<h2>Langkah 8 — Buat prediksi</h2>' +
       '<p class="am-hero">You already trained a model. Now give it <b>inputs (X)</b> and it will fill <b>' + yName + ' (Y)</b> for you. You never type Y.</p>' +
       '<div class="am-s8-meta">' +
       '<span class="automl-badge">Model: ' + ((state.result && state.result.model_file) || "—") + '</span> ' +
@@ -893,7 +1649,8 @@ function drawLineSeries(canvas, seriesList, opts) {
         : "For regression, minimize/maximize/hit a numeric " + yName + ".") +
       "</p>" +
       goalBlock +
-      '<p class="micro"><b>Which inputs may change?</b> Set min and max from your process limits.</p>' +
+      '<p class="micro"><b>Which inputs may change?</b> Numerik: isi min/max dari batas proses. ' +
+      "Kategorikal (mis. Gender): centang nilai yang boleh dicari (male/female) — bukan angka.</p>" +
       '<div class="table-scroll" id="am-opt-vars"></div>' +
       '<label>Search budget (trials) <input id="am-opt-budget" type="number" min="20" max="500" value="80"/></label>' +
       '<label>Cost strength (0 = ignore cost) <input id="am-opt-cost" type="number" min="0" max="10" step="0.1" value="0"/></label>' +
@@ -921,20 +1678,69 @@ function drawLineSeries(canvas, seriesList, opts) {
     const yName = (state.result && state.result.target) || state.target || "prediction";
     let html =
       '<table class="automl-table" id="am-pred-table"><thead><tr><th>#</th>' +
-      feats.map((f) => "<th title='Input'>" + f + " <span class='micro'>(X)</span></th>").join("") +
+      feats
+        .map(function (f) {
+          const info = featureInfo(f);
+          const tip = info.kind === "categorical" ? "kategorikal" : "numerik";
+          return (
+            "<th title='" +
+            escapeAttr(info.reason || tip) +
+            "'>" +
+            f +
+            " <span class='micro'>(" +
+            (info.kind === "categorical" ? "kat" : "num") +
+            ")</span></th>"
+          );
+        })
+        .join("") +
       "<th class='am-y-col'>" + yName + " <span class='micro'>(Y predicted)</span></th>" +
       "</tr></thead><tbody>";
     state.predRows.forEach((row, ri) => {
       html += "<tr><td>" + (ri + 1) + "</td>";
       feats.forEach((f) => {
-        html +=
-          "<td><input data-pr='" +
-          ri +
-          "' data-pf='" +
-          f +
-          "' value=\"" +
-          String(row[f] != null ? row[f] : "").replace(/"/g, "&quot;") +
-          '" style="width:100%;min-width:72px" autocomplete="off"/></td>';
+        const info = featureInfo(f);
+        const cur = row[f] != null ? row[f] : "";
+        if (info.kind === "categorical" && info.categories.length) {
+          const opts = info.categories
+            .map(function (c) {
+              const sel = String(c) === String(cur) ? " selected" : "";
+              return "<option value=\"" + escapeAttr(c) + "\"" + sel + ">" + escapeAttr(c) + "</option>";
+            })
+            .join("");
+          const extra =
+            cur !== "" && !info.categories.some(function (c) { return String(c) === String(cur); })
+              ? "<option value=\"" + escapeAttr(cur) + "\" selected>" + escapeAttr(cur) + "</option>"
+              : "";
+          html +=
+            "<td><select data-pr='" +
+            ri +
+            "' data-pf='" +
+            escapeAttr(f) +
+            "' style='width:100%;min-width:88px'>" +
+            opts +
+            extra +
+            "</select></td>";
+        } else if (info.kind === "categorical") {
+          html +=
+            "<td><input data-pr='" +
+            ri +
+            "' data-pf='" +
+            escapeAttr(f) +
+            "' list='am-dl-" +
+            escapeAttr(f) +
+            "' value=\"" +
+            escapeAttr(cur) +
+            '" placeholder="mis. male" style="width:100%;min-width:72px" autocomplete="off"/></td>';
+        } else {
+          html +=
+            "<td><input type='number' step='any' data-pr='" +
+            ri +
+            "' data-pf='" +
+            escapeAttr(f) +
+            "' value=\"" +
+            escapeAttr(cur) +
+            '" style="width:100%;min-width:72px" autocomplete="off"/></td>';
+        }
       });
       const pred =
         state.predResults && state.predResults[ri] != null
@@ -944,8 +1750,15 @@ function drawLineSeries(canvas, seriesList, opts) {
       html += "</tr>";
     });
     html += "</tbody></table>";
+    // datalists for free-text categoricals (old models without category list)
+    feats.forEach(function (f) {
+      const info = featureInfo(f);
+      if (info.kind === "categorical" && !info.categories.length) return;
+      if (info.kind !== "categorical") return;
+      // already used <select> when categories exist
+    });
     wrap.innerHTML = html;
-    wrap.querySelectorAll("input[data-pr]").forEach((inp) => {
+    wrap.querySelectorAll("input[data-pr], select[data-pr]").forEach((inp) => {
       inp.addEventListener("change", () => {
         const r = Number(inp.getAttribute("data-pr"));
         const f = inp.getAttribute("data-pf");
@@ -989,16 +1802,235 @@ function drawLineSeries(canvas, seriesList, opts) {
   }
 
   function applyUploadPayload(data) {
-    state.uploadId = data.upload_id;
-    state.sourceName = data.source_name || data.upload_id;
+    state.uploadId = data.upload_id || null;
+    state.sourceName = data.source_name || data.upload_id || state.sourceName;
     state.columns = data.columns || [];
     state.rows = data.rows;
     state.cols = data.cols;
     state.head = data.head || [];
     state.tail = data.tail || [];
-    setStatus("CSV ready: " + state.sourceName);
+    state.taskManual = false;
+    state.forceClassification = false;
+    state.target = "";
+    state.features = [];
+    state.result = null;
+    if (!data.local) state.pendingFile = null;
+    setStatus("CSV siap: " + state.sourceName + (data.local ? " (pratinjau lokal)" : ""));
     summary();
     showPreview();
+  }
+
+  function parseCsvLine(line, sep) {
+    const out = [];
+    let cur = "";
+    let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQ) {
+        if (ch === '"') {
+          if (line[i + 1] === '"') {
+            cur += '"';
+            i++;
+          } else inQ = false;
+        } else cur += ch;
+      } else if (ch === '"') inQ = true;
+      else if (ch === sep) {
+        out.push(cur);
+        cur = "";
+      } else cur += ch;
+    }
+    out.push(cur);
+    return out;
+  }
+
+  function detectCsvSep(headerLine) {
+    const counts = { ",": 0, ";": 0, "\t": 0 };
+    let inQ = false;
+    for (let i = 0; i < headerLine.length; i++) {
+      const ch = headerLine[i];
+      if (ch === '"') inQ = !inQ;
+      else if (!inQ && counts[ch] !== undefined) counts[ch]++;
+    }
+    let best = ",";
+    let n = -1;
+    Object.keys(counts).forEach((k) => {
+      if (counts[k] > n) {
+        n = counts[k];
+        best = k;
+      }
+    });
+    return best;
+  }
+
+  function parseCsvText(text) {
+    const cleaned = String(text || "").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    const lines = cleaned.split("\n").filter((line, idx, arr) => line.length > 0 || idx < arr.length - 1);
+    while (lines.length && !String(lines[lines.length - 1]).trim()) lines.pop();
+    if (!lines.length) throw new Error("File CSV kosong.");
+    const sep = detectCsvSep(lines[0]);
+    const headers = parseCsvLine(lines[0], sep).map((h) => String(h || "").replace(/^\uFEFF/, "").trim() || "col");
+    const seen = {};
+    const names = headers.map((h, i) => {
+      let name = h || "col_" + (i + 1);
+      if (seen[name]) {
+        seen[name] += 1;
+        name = name + "_" + seen[name];
+      } else seen[name] = 1;
+      return name;
+    });
+    const rows = [];
+    for (let r = 1; r < lines.length; r++) {
+      if (!String(lines[r]).trim()) continue;
+      const cells = parseCsvLine(lines[r], sep);
+      const obj = {};
+      names.forEach((name, i) => {
+        const raw = cells[i] == null ? "" : String(cells[i]).trim();
+        if (raw === "") {
+          obj[name] = null;
+          return;
+        }
+        const num = Number(raw.replace(",", "."));
+        obj[name] = Number.isFinite(num) && /^-?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(raw.replace(",", ".")) ? num : raw;
+      });
+      rows.push(obj);
+    }
+    if (!rows.length) throw new Error("CSV tidak punya baris data.");
+    const columns = names.map((name) => {
+      let missing = 0;
+      let numeric = 0;
+      let total = 0;
+      const seen = new Set();
+      const samples = [];
+      rows.forEach((row) => {
+        const v = row[name];
+        if (v == null || v === "") missing += 1;
+        else {
+          total += 1;
+          if (typeof v === "number") numeric += 1;
+          seen.add(String(v));
+          if (samples.length < 8) samples.push(v);
+        }
+      });
+      const ctype = total && numeric >= total * 0.8 ? "numeric" : "text";
+      const nUnique = seen.size;
+      const uniqRatio = total ? nUnique / total : 0;
+      const col = {
+        name,
+        type: ctype,
+        missing,
+        n_unique: nUnique,
+        unique_ratio: Math.round(uniqRatio * 10000) / 10000,
+        samples,
+      };
+      // local AutoGluon-style suggestion
+      if (ctype !== "numeric") {
+        col.suggested_task = "classification";
+        col.suggested_reason = "Target teks/kategori → klasifikasi.";
+      } else if (nUnique === 2) {
+        col.suggested_task = "classification";
+        col.suggested_reason = "Tepat 2 nilai unik → klasifikasi biner.";
+      } else if (nUnique > 1000) {
+        col.suggested_task = "regression";
+        col.suggested_reason = "Banyak nilai unik → regresi.";
+      } else {
+        const thresh = rows.length >= 1000 ? 0.05 : 0.1;
+        const intLike = samples.every((v) => typeof v !== "number" || Math.abs(v - Math.round(v)) < 1e-8);
+        if (intLike && nUnique <= Math.max(10, Math.floor(rows.length * thresh))) {
+          col.suggested_task = "classification";
+          col.suggested_reason = nUnique + " kelas bilangan bulat → klasifikasi.";
+        } else if (uniqRatio >= thresh && !intLike) {
+          col.suggested_task = "regression";
+          col.suggested_reason = "Numerik kontinu → regresi.";
+        } else if (uniqRatio < thresh) {
+          col.suggested_task = "classification";
+          col.suggested_reason = "Sedikit nilai unik → klasifikasi.";
+        } else {
+          col.suggested_task = "regression";
+          col.suggested_reason = "Numerik → regresi.";
+        }
+      }
+      return col;
+    });
+    return {
+      ok: true,
+      local: true,
+      upload_id: null,
+      rows: rows.length,
+      cols: names.length,
+      columns,
+      head: rows.slice(0, 5),
+      tail: rows.slice(Math.max(0, rows.length - 5)),
+      _rows: rows,
+    };
+  }
+
+  async function loadLocalCsv(file) {
+    const text = await file.text();
+    const data = parseCsvText(text);
+    state.pendingFile = file;
+    data.source_name = file.name;
+    applyUploadPayload(data);
+  }
+
+  async function uploadFileToApi(file) {
+    const base = apiBase();
+    if (!base) throw new Error("Server API belum aktif. Jalankan Start_Migas.bat lalu buka http://127.0.0.1:5055/");
+    const fd = new FormData();
+    fd.append("file", file);
+    const h = {};
+    const t = localStorage.getItem("migas-api-token") || "";
+    if (t) h["X-Migas-Token"] = t;
+    const res = await fetch(base + "/api/automl/upload", { method: "POST", headers: h, body: fd });
+    const raw = await res.text();
+    let data = {};
+    try {
+      data = JSON.parse(raw);
+    } catch (e) {
+      throw new Error("Upload HTTP " + res.status + " — " + raw.slice(0, 120));
+    }
+    if (!data.ok) throw new Error(data.error || "Upload gagal");
+    data.source_name = file.name;
+    state.pendingFile = null;
+    applyUploadPayload(data);
+    refreshUploadList();
+    return data;
+  }
+
+  async function ensureServerUpload() {
+    if (state.uploadId) return state.uploadId;
+    if (state.splitMode === "files" && requiredTrainUploadId()) return requiredTrainUploadId();
+    if (state.pendingFile) {
+      setStatus("Mengunggah CSV ke server…");
+      await uploadFileToApi(state.pendingFile);
+      return state.uploadId;
+    }
+    throw new Error("Belum ada CSV. Unggah atau pilih file dulu.");
+  }
+
+  async function probeLocalApi() {
+    const banner = document.getElementById("am-api-banner");
+    const base = apiBase();
+    if (!banner) return;
+    if (!base) {
+      banner.textContent = "API belum diset. Isi di Pengaturan atau jalankan Start_Migas.bat.";
+      return;
+    }
+    try {
+      const res = await fetch(base.replace(/\/$/, "") + "/api/health", { headers: headers(false) });
+      const data = await res.json();
+      if (res.ok && data && data.ok) {
+        banner.className = "am-pred-success";
+        banner.innerHTML = "Server lokal aktif: <code>" + base + "</code>. Siap unggah &amp; latih.";
+      } else {
+        throw new Error((data && data.error) || "Health check gagal");
+      }
+    } catch (err) {
+      banner.className = "am-busy";
+      banner.innerHTML =
+        "Server lokal belum aktif di <code>" + base + "</code>. " +
+        "Double-click <b>Start_Migas.bat</b>, tunggu browser terbuka, lalu klik Segarkan daftar / unggah lagi. " +
+        "<span class='micro'>(" + (err && err.message ? err.message : err) + ")</span>";
+    }
   }
 
   async function refreshUploadList() {
@@ -1006,19 +2038,19 @@ function drawLineSeries(canvas, seriesList, opts) {
     if (!host) return;
     const base = apiBase();
     if (!base) {
-      host.innerHTML = "<p class='micro'>API not available.</p>";
+      host.innerHTML = "<p class='micro'>Daftar folder uploads tersedia setelah server lokal aktif (Start_Migas.bat).</p>";
       return;
     }
     try {
       const res = await fetch(base + "/api/automl/uploads", { headers: headers(false) });
       const data = await res.json();
       if (!data.ok) {
-        host.innerHTML = "<p class='status'>" + (data.error || "Failed") + "</p>";
+        host.innerHTML = "<p class='status'>" + (data.error || "Gagal memuat daftar") + "</p>";
         return;
       }
       state.uploadList = data.files || [];
       if (!state.uploadList.length) {
-        host.innerHTML = "<p class='micro'>No CSV files in uploads folder yet.</p>";
+        host.innerHTML = "<p class='micro'>Belum ada file CSV di folder uploads.</p>";
         return;
       }
       host.innerHTML = state.uploadList
@@ -1038,14 +2070,15 @@ function drawLineSeries(canvas, seriesList, opts) {
       host.querySelectorAll("[data-up]").forEach((btn) => {
         btn.addEventListener("click", async () => {
           try {
-            setStatus("Loading " + btn.getAttribute("data-up") + " …");
+            setStatus("Memuat " + btn.getAttribute("data-up") + " …");
             const res2 = await fetch(base + "/api/automl/use-upload", {
               method: "POST",
               headers: headers(true),
               body: JSON.stringify({ name: btn.getAttribute("data-up") }),
             });
             const d = await res2.json();
-            if (!d.ok) throw new Error(d.error || "Failed");
+            if (!d.ok) throw new Error(d.error || "Gagal memuat file");
+            state.pendingFile = null;
             applyUploadPayload(d);
           } catch (e) {
             setStatus(e.message || String(e));
@@ -1063,47 +2096,53 @@ function drawLineSeries(canvas, seriesList, opts) {
     const ref = document.getElementById("am-refresh-uploads");
     if (ref) ref.addEventListener("click", refreshUploadList);
     if (!input || !drop) return;
+
     const send = async (file) => {
-      const base = apiBase();
-      if (!base) {
-        setStatus("Open via the app URL (not file://) or set API base in Settings.");
+      if (!file) return;
+      const name = String(file.name || "").toLowerCase();
+      if (name && !name.endsWith(".csv") && file.type && file.type.indexOf("csv") < 0 && file.type !== "text/plain") {
+        setStatus("Pilih file CSV (.csv).");
         return;
       }
-      const fd = new FormData();
-      fd.append("file", file);
-      setStatus("Uploading…");
+      setStatus("Membaca " + file.name + "…");
       try {
-        const h = {};
-        const t = localStorage.getItem("migas-api-token") || "";
-        if (t) h["X-Migas-Token"] = t;
-        const res = await fetch(base + "/api/automl/upload", { method: "POST", headers: h, body: fd });
-        const raw = await res.text();
-        let data = {};
-        try {
-          data = JSON.parse(raw);
-        } catch (e) {
-          setStatus("Upload HTTP " + res.status + " — " + raw.slice(0, 120));
-          return;
+        if (apiBase()) {
+          await uploadFileToApi(file);
+        } else {
+          await loadLocalCsv(file);
+          setStatus("CSV dibaca di browser: " + file.name + ". Untuk melatih, jalankan Start_Migas.bat.");
         }
-        if (!data.ok) {
-          setStatus(data.error || "Upload failed");
-          return;
-        }
-        data.source_name = file.name;
-        applyUploadPayload(data);
-        refreshUploadList();
       } catch (err) {
-        setStatus("Upload failed: " + (err && err.message));
+        try {
+          await loadLocalCsv(file);
+          setStatus("Upload server gagal, CSV dibaca lokal: " + (err && err.message ? err.message : err));
+        } catch (err2) {
+          setStatus("Gagal membaca CSV: " + (err2 && err2.message ? err2.message : err2));
+        }
+      } finally {
+        input.value = "";
       }
     };
+
     input.addEventListener("change", () => {
       const f = input.files && input.files[0];
       if (f) send(f);
     });
-    drop.addEventListener("click", () => input.click());
-    drop.addEventListener("dragover", (e) => e.preventDefault());
+    drop.addEventListener("dragenter", (e) => {
+      e.preventDefault();
+      drop.classList.add("hot");
+    });
+    drop.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      drop.classList.add("hot");
+    });
+    drop.addEventListener("dragleave", (e) => {
+      if (!drop.contains(e.relatedTarget)) drop.classList.remove("hot");
+    });
     drop.addEventListener("drop", (e) => {
       e.preventDefault();
+      drop.classList.remove("hot");
       const f = e.dataTransfer.files && e.dataTransfer.files[0];
       if (f) send(f);
     });
@@ -1114,6 +2153,8 @@ function drawLineSeries(canvas, seriesList, opts) {
       el.addEventListener("change", () => {
         state.target = el.getAttribute("data-y");
         state.features = state.features.filter((f) => f !== state.target);
+        state.taskManual = false;
+        state.forceClassification = false;
         detectTask();
         render();
         summary();
@@ -1127,6 +2168,17 @@ function drawLineSeries(canvas, seriesList, opts) {
         } else {
           state.features = state.features.filter((f) => f !== name);
         }
+        summary();
+      });
+    });
+    document.querySelectorAll('input[name="am-task"]').forEach((el) => {
+      el.addEventListener("change", () => {
+        if (!el.checked) return;
+        state.taskManual = true;
+        state.task = el.value;
+        state.forceClassification = el.value === "classification";
+        state.taskReason = "Dipilih manual.";
+        render();
         summary();
       });
     });
@@ -1144,14 +2196,102 @@ function drawLineSeries(canvas, seriesList, opts) {
         render();
         summary();
       });
-    const force = document.getElementById("am-force-cls");
-    if (force)
-      force.addEventListener("change", () => {
-        state.forceClassification = force.checked;
-        detectTask();
+  }
+
+  function requiredTrainUploadId() {
+    return state.trainUploadId || state.uploadId || null;
+  }
+
+  async function uploadSplitCsv(file, role) {
+    const base = apiBase();
+    if (!base) throw new Error("Server API belum aktif. Jalankan Start_Migas.bat.");
+    if (!file) throw new Error("Pilih file CSV dulu.");
+    setStatus("Mengunggah " + role + " CSV…");
+    const fd = new FormData();
+    fd.append("file", file);
+    const h = headers(false);
+    // FormData: jangan set Content-Type manual
+    const res = await fetch(base + "/api/automl/upload", { method: "POST", headers: h, body: fd });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Upload gagal");
+    // Validasi kolom vs X/Y terpilih
+    const names = (data.columns || []).map(function (c) { return c.name; });
+    const need = [state.target].concat(state.features || []).filter(Boolean);
+    const missing = need.filter(function (n) { return names.indexOf(n) < 0; });
+    if (missing.length) {
+      throw new Error(
+        "CSV " + role + " tidak punya kolom: " + missing.join(", ") +
+          ". Samakan nama kolom dengan X/Y langkah 2."
+      );
+    }
+    const meta = { rows: data.rows, cols: data.cols };
+    if (role === "train") {
+      state.trainUploadId = data.upload_id;
+      state.trainFileName = file.name;
+      state.trainMeta = meta;
+    } else {
+      state.testUploadId = data.upload_id;
+      state.testFileName = file.name;
+      state.testMeta = meta;
+    }
+    setStatus(
+      "CSV " + role + " siap: " + file.name + " (" + meta.rows + " baris). Kolom X/Y cocok."
+    );
+    render();
+    summary();
+  }
+
+  function wireStep3() {
+    document.querySelectorAll('input[name="am-split-mode"]').forEach(function (el) {
+      el.addEventListener("change", function () {
+        state.splitMode = el.value === "files" ? "files" : "auto";
         render();
-        summary();
       });
+    });
+    const ts = document.getElementById("am-test-size");
+    const seed = document.getElementById("am-seed");
+    if (ts)
+      ts.addEventListener("change", () => {
+        state.testSize = Math.min(0.5, Math.max(0.05, Number(ts.value) || 0.2));
+      });
+    if (seed)
+      seed.addEventListener("change", () => {
+        state.randomState = Number(seed.value) || 42;
+      });
+    const trainInp = document.getElementById("am-train-file");
+    const testInp = document.getElementById("am-test-file");
+    if (trainInp) {
+      trainInp.addEventListener("change", async function () {
+        try {
+          await uploadSplitCsv(trainInp.files && trainInp.files[0], "train");
+        } catch (err) {
+          setStatus(err.message || String(err));
+        }
+      });
+    }
+    if (testInp) {
+      testInp.addEventListener("change", async function () {
+        try {
+          await uploadSplitCsv(testInp.files && testInp.files[0], "test");
+        } catch (err) {
+          setStatus(err.message || String(err));
+        }
+      });
+    }
+    const use1 = document.getElementById("am-train-use-step1");
+    if (use1) {
+      use1.addEventListener("click", function () {
+        if (!state.uploadId) {
+          setStatus("Belum ada CSV di langkah 1.");
+          return;
+        }
+        state.trainUploadId = state.uploadId;
+        state.trainFileName = state.sourceName || state.uploadId;
+        state.trainMeta = { rows: state.rows, cols: state.cols };
+        setStatus("Train memakai file langkah 1.");
+        render();
+      });
+    }
   }
 
   function wireStep4() {
@@ -1163,10 +2303,22 @@ function drawLineSeries(canvas, seriesList, opts) {
         } else state.models = state.models.filter((x) => x !== m);
       });
     });
+    const def = document.getElementById("am-models-default");
+    if (def)
+      def.addEventListener("click", () => {
+        state.models = ["LightGBM", "CatBoost", "RandomForest"];
+        render();
+      });
+    const safe = document.getElementById("am-models-safe");
+    if (safe)
+      safe.addEventListener("click", () => {
+        state.models = ["LightGBM", "CatBoost", "RandomForest", "ExtraTrees"];
+        render();
+      });
     const all = document.getElementById("am-models-all");
     if (all)
       all.addEventListener("click", () => {
-        state.models = ["LightGBM", "XGBoost", "LinearModel", "CatBoost", "RandomForest", "ExtraTrees", "KNeighbors"];
+        state.models = ["LightGBM", "CatBoost", "RandomForest", "ExtraTrees", "XGBoost", "LinearModel", "KNeighbors", "MLP"];
         render();
       });
   }
@@ -1179,16 +2331,23 @@ function drawLineSeries(canvas, seriesList, opts) {
     if (start)
       start.addEventListener("click", async () => {
         const base = apiBase();
-        if (!base) return setStatus("Set API base URL in Settings.");
-        if (!state.uploadId) return setStatus("Upload or pick a CSV first.");
-        if (!state.target || !state.features.length) return setStatus("Choose Y and at least one X.");
+        if (!base) return setStatus("Server API belum aktif. Jalankan Start_Migas.bat.");
+        try {
+          await ensureServerUpload();
+        } catch (err) {
+          return setStatus(err.message || String(err));
+        }
+        if (!state.target || !state.features.length) return setStatus("Pilih Y dan minimal satu X.");
         state.timeout = Number((timeout && timeout.value) || state.timeout);
-        setStatus("Starting training…");
+        setStatus("Memulai training…");
         const res = await fetch(base + "/api/automl/train", {
           method: "POST",
           headers: headers(true),
           body: JSON.stringify({
-            upload_id: state.uploadId,
+            upload_id:
+              state.splitMode === "files"
+                ? requiredTrainUploadId() || state.uploadId
+                : state.uploadId,
             target: state.target,
             features: state.features,
             task: state.task,
@@ -1196,7 +2355,11 @@ function drawLineSeries(canvas, seriesList, opts) {
             random_state: state.randomState,
             timeout: state.timeout,
             models_names: state.models,
-            force_classification: state.forceClassification,
+            force_classification: state.task === "classification" && state.forceClassification,
+            split_mode: state.splitMode === "files" ? "files" : "auto",
+            train_upload_id:
+              state.splitMode === "files" ? requiredTrainUploadId() : null,
+            test_upload_id: state.splitMode === "files" ? state.testUploadId : null,
           }),
         });
         const data = await res.json();
@@ -1242,62 +2405,103 @@ function drawLineSeries(canvas, seriesList, opts) {
     }, 2000);
   }
 
-  function wireStep7() {
-    const btn = document.getElementById("am-list-models");
-    const host = document.getElementById("am-models");
-    const goPred = document.getElementById("am-goto-predict");
-    if (goPred && !goPred._wired) {
-      goPred._wired = true;
-      goPred.addEventListener("click", () => {
-        if (!state.result || !state.result.model_file) {
-          setStatus("Load a saved model first (click one in the list).");
-          return;
-        }
-        setStep(8);
-      });
+  async function renderSavedModelButtons(host, opts) {
+    opts = opts || {};
+    if (!host) return;
+    const base = apiBase();
+    if (!base) {
+      host.innerHTML = "<p class='micro'>Nyalakan server (Start_Migas.bat) untuk melihat model tersimpan.</p>";
+      return;
     }
-    async function refreshModels() {
-      const base = apiBase();
+    try {
       const res = await fetch(base + "/api/models", { headers: headers(false) });
       const data = await res.json();
-      if (!host) return;
       if (!data.ok) {
-        host.textContent = data.error || "Failed";
+        host.innerHTML = "<p class='status'>" + (data.error || "Gagal memuat model") + "</p>";
         return;
       }
       const files = data.files || [];
       if (!files.length) {
-        host.innerHTML = "<p class='micro'>No models yet. Train once in Steps 1–6, then you can reuse models here.</p>";
+        host.innerHTML =
+          "<p class='micro'>Belum ada model. Latih sekali lewat langkah 1–6, lalu model muncul di sini.</p>";
         return;
       }
       host.innerHTML =
-        "<p class='micro'>Click a model to load it for prediction — <b>no retraining</b>.</p>" +
+        "<p class='micro'>Klik model untuk memuat" +
+        (opts.goPredict ? " dan lanjut prediksi" : "") +
+        " — <b>tanpa latih ulang</b>.</p>" +
         files
-          .map(
-            (f) =>
+          .map(function (f) {
+            return (
               '<button type="button" class="storage-file am-model-pick" data-model="' +
               f.name +
               '"><strong>' +
               f.name +
               "</strong><span class='micro'>" +
-              (f.task || "") +
+              (f.task === "classification" ? "klasifikasi" : f.task === "regression" ? "regresi" : f.task || "") +
+              (f.target ? " · Y: " + f.target : "") +
               " · " +
               (f.created || f.modified || "") +
               "</span></button>"
-          )
+            );
+          })
           .join("");
-      host.querySelectorAll("[data-model]").forEach((b) => {
-        b.addEventListener("click", async () => {
+      host.querySelectorAll("[data-model]").forEach(function (btn) {
+        btn.addEventListener("click", async function () {
           try {
-            setStatus("Loading model…");
-            await loadModelForPredict(b.getAttribute("data-model"));
-            b.classList.add("on");
-            setStatus("Model ready. Click “Go to Predict” or open Step 8.");
+            setStatus("Memuat model " + btn.getAttribute("data-model") + " …");
+            await loadModelForPredict(btn.getAttribute("data-model"));
+            setStatus("Model dimuat: " + btn.getAttribute("data-model"));
+            setStep(opts.goPredict ? 8 : 7);
           } catch (e) {
             setStatus(e.message || String(e));
           }
         });
       });
+    } catch (e) {
+      host.innerHTML = "<p class='status'>" + (e.message || e) + "</p>";
+    }
+  }
+
+  function wireHomeModelShortcut() {
+    const j7 = document.getElementById("am-jump-7");
+    const j8 = document.getElementById("am-jump-8");
+    const ref = document.getElementById("am-refresh-saved-models");
+    const host = document.getElementById("am-saved-models-home");
+    if (j7) j7.addEventListener("click", function () { setStep(7); });
+    if (j8) {
+      j8.addEventListener("click", function () {
+        if (state.result && state.result.model_file) setStep(8);
+        else setStep(7);
+      });
+    }
+    if (ref) ref.addEventListener("click", function () { renderSavedModelButtons(host, { goPredict: true }); });
+    renderSavedModelButtons(host, { goPredict: true });
+  }
+
+  function wireStep7() {
+    const btn = document.getElementById("am-list-models");
+    const host = document.getElementById("am-models");
+    const goPred = document.getElementById("am-goto-predict");
+    const backTrain = document.getElementById("am-back-train");
+    if (goPred && !goPred._wired) {
+      goPred._wired = true;
+      goPred.addEventListener("click", () => {
+        if (!state.result || !state.result.model_file) {
+          setStatus("Pilih model di daftar dulu.");
+          return;
+        }
+        setStep(8);
+      });
+    }
+    if (backTrain && !backTrain._wired) {
+      backTrain._wired = true;
+      backTrain.addEventListener("click", function () {
+        setStep(1);
+      });
+    }
+    async function refreshModels() {
+      await renderSavedModelButtons(host, { goPredict: false });
     }
     if (btn && !btn._wired) {
       btn._wired = true;
@@ -1311,24 +2515,68 @@ function drawLineSeries(canvas, seriesList, opts) {
     const host = document.getElementById("am-opt-vars");
     if (!host) return;
     const feats = inputFeatures();
-    // guess numeric from training columns meta
-    const meta = {};
-    (state.columns || []).forEach((c) => { meta[c.name] = c; });
-    let html = "<table class='automl-table'><thead><tr><th>Use</th><th>Input (X)</th><th>Min</th><th>Max</th><th>Cost weight</th></tr></thead><tbody>";
+    let html =
+      "<table class='automl-table'><thead><tr>" +
+      "<th>Use</th><th>Input (X)</th><th>Jenis</th><th>Batas / nilai</th><th>Cost weight</th>" +
+      "</tr></thead><tbody>";
+    let rows = 0;
     feats.forEach((f) => {
-      const isNum = !meta[f] || meta[f].type === "numeric";
-      if (!isNum) return; // only numeric searchable
-      html +=
-        "<tr>" +
-        "<td><input type='checkbox' data-opt-en='" + f + "' checked/></td>" +
-        "<td>" + f + "</td>" +
-        "<td><input type='number' step='any' data-opt-min='" + f + "' value='0' style='width:90px'/></td>" +
-        "<td><input type='number' step='any' data-opt-max='" + f + "' value='100' style='width:90px'/></td>" +
-        "<td><input type='number' step='any' min='0' data-opt-cw='" + f + "' value='0' style='width:70px'/></td>" +
-        "</tr>";
+      const info = featureInfo(f);
+      rows += 1;
+      if (info.kind === "categorical") {
+        const cats = info.categories.length ? info.categories : [];
+        let valuesCell;
+        if (cats.length) {
+          valuesCell =
+            "<div class='am-cat-choices' data-opt-type='categorical' data-opt-name='" +
+            escapeAttr(f) +
+            "'>" +
+            cats
+              .map(function (c) {
+                return (
+                  "<label class='check-line'><input type='checkbox' data-opt-cat='" +
+                  escapeAttr(f) +
+                  "' value=\"" +
+                  escapeAttr(c) +
+                  "\" checked/> " +
+                  escapeAttr(c) +
+                  "</label>"
+                );
+              })
+              .join("") +
+            "</div>";
+        } else {
+          valuesCell =
+            "<input type='text' data-opt-cat-free='" +
+            escapeAttr(f) +
+            "' placeholder='male, female' style='width:180px' title='Pisahkan dengan koma'/>";
+        }
+        html +=
+          "<tr>" +
+          "<td><input type='checkbox' data-opt-en='" + escapeAttr(f) + "' data-opt-kind='categorical' checked/></td>" +
+          "<td>" + escapeAttr(f) + "</td>" +
+          "<td><span class='automl-badge'>kategorikal</span></td>" +
+          "<td>" + valuesCell + "</td>" +
+          "<td><input type='number' step='any' min='0' data-opt-cw='" + escapeAttr(f) + "' value='0' style='width:70px' disabled title='Cost hanya untuk numerik'/></td>" +
+          "</tr>";
+      } else {
+        html +=
+          "<tr>" +
+          "<td><input type='checkbox' data-opt-en='" + escapeAttr(f) + "' data-opt-kind='numeric' checked/></td>" +
+          "<td>" + escapeAttr(f) + "</td>" +
+          "<td><span class='automl-badge'>numerik</span></td>" +
+          "<td>" +
+          "Min <input type='number' step='any' data-opt-min='" + escapeAttr(f) + "' value='" + info.min + "' style='width:90px'/> " +
+          "Max <input type='number' step='any' data-opt-max='" + escapeAttr(f) + "' value='" + info.max + "' style='width:90px'/>" +
+          "</td>" +
+          "<td><input type='number' step='any' min='0' data-opt-cw='" + escapeAttr(f) + "' value='0' style='width:70px'/></td>" +
+          "</tr>";
+      }
     });
     html += "</tbody></table>";
-    host.innerHTML = html || "<p class='micro'>No numeric inputs available to optimize.</p>";
+    host.innerHTML = rows
+      ? html
+      : "<p class='micro'>Tidak ada input yang bisa dioptimasi.</p>";
   }
 
   function wireOptimize() {
@@ -1345,18 +2593,46 @@ function drawLineSeries(canvas, seriesList, opts) {
       const costStrength = Number((document.getElementById("am-opt-cost") || {}).value || 0);
       const variables = [];
       const cost_weights = {};
+      const fixed = {};
+      const baseRow = (state.predRows && state.predRows[0]) || {};
       document.querySelectorAll("[data-opt-en]").forEach((en) => {
         const f = en.getAttribute("data-opt-en");
-        const minEl = document.querySelector("[data-opt-min='" + f + "']");
-        const maxEl = document.querySelector("[data-opt-max='" + f + "']");
+        const kind = en.getAttribute("data-opt-kind") || featureInfo(f).kind;
         const cwEl = document.querySelector("[data-opt-cw='" + f + "']");
-        variables.push({
-          name: f,
-          enabled: en.checked,
-          min: Number(minEl && minEl.value),
-          max: Number(maxEl && maxEl.value),
-        });
         cost_weights[f] = Number(cwEl && cwEl.value) || 0;
+        if (!en.checked) {
+          const info = featureInfo(f);
+          let fv = baseRow[f];
+          if (fv === undefined || fv === "") fv = info.default;
+          fixed[f] = fv;
+          variables.push({ name: f, enabled: false, type: kind });
+          return;
+        }
+        if (kind === "categorical") {
+          let choices = [];
+          document.querySelectorAll("[data-opt-cat='" + f + "']").forEach(function (cb) {
+            if (cb.checked) choices.push(cb.value);
+          });
+          const freeEl = document.querySelector("[data-opt-cat-free='" + f + "']");
+          if (freeEl && freeEl.value.trim()) {
+            choices = freeEl.value.split(/[,;|]/).map(function (s) { return s.trim(); }).filter(Boolean);
+          }
+          if (!choices.length) {
+            const info = featureInfo(f);
+            choices = info.categories.slice();
+          }
+          variables.push({ name: f, enabled: true, type: "categorical", choices: choices });
+        } else {
+          const minEl = document.querySelector("[data-opt-min='" + f + "']");
+          const maxEl = document.querySelector("[data-opt-max='" + f + "']");
+          variables.push({
+            name: f,
+            enabled: true,
+            type: "numeric",
+            min: Number(minEl && minEl.value),
+            max: Number(maxEl && maxEl.value),
+          });
+        }
       });
       const out = document.getElementById("am-opt-out");
       const busy = document.getElementById("am-pred-busy");
@@ -1378,7 +2654,7 @@ function drawLineSeries(canvas, seriesList, opts) {
             variables: variables,
             cost_weights: cost_weights,
             cost_strength: costStrength,
-            fixed: {},
+            fixed: fixed,
           }),
         });
         const data = await res.json();
@@ -1390,8 +2666,9 @@ function drawLineSeries(canvas, seriesList, opts) {
         // fill first pred row with best inputs + show predicted y
         const feats = inputFeatures();
         const row = {};
+        const src = data.best_inputs_full || data.best_inputs || {};
         feats.forEach((f) => {
-          row[f] = data.best_inputs && data.best_inputs[f] != null ? data.best_inputs[f] : "";
+          row[f] = src[f] != null ? src[f] : "";
         });
         state.predRows = [row];
         var showY = data.predicted_y;
@@ -1589,18 +2866,29 @@ function drawLineSeries(canvas, seriesList, opts) {
   }
 
   function canNext() {
-    if (state.step === 1) return !!state.uploadId;
+    if (state.step === 1) return !!(state.uploadId || state.pendingFile || (state.columns && state.columns.length));
     if (state.step === 2) return !!state.target && state.features.length > 0;
+    if (state.step === 3) {
+      if (state.splitMode !== "files") return true;
+      return !!(requiredTrainUploadId() && state.testUploadId);
+    }
     if (state.step === 4) return state.models.length > 0;
     if (state.step === 5) return !!state.result;
     return true;
+  }
+
+  function canJumpToStep(s) {
+    if (s === 7 || s === 8) return true;
+    if (s <= state.step) return true;
+    if (state.result && state.result.model_file && s >= 7) return true;
+    return false;
   }
 
   function bind() {
     const next = document.getElementById("automl-next");
     const back = document.getElementById("automl-back");
     if (next)
-      next.addEventListener("click", () => {
+      next.addEventListener("click", async () => {
         if (state.step === 3) {
           const ts = document.getElementById("am-test-size");
           const seed = document.getElementById("am-seed");
@@ -1608,14 +2896,48 @@ function drawLineSeries(canvas, seriesList, opts) {
           if (seed) state.randomState = Number(seed.value) || 42;
         }
         if (!canNext()) {
-          setStatus("Complete this step before continuing.");
+          if (state.step === 3 && state.splitMode === "files") {
+            setStatus("Mode file: unggah train (atau pakai langkah 1) dan test CSV dulu.");
+          } else {
+            setStatus("Lengkapi langkah ini sebelum lanjut.");
+          }
           return;
+        }
+        if (state.step === 1 && state.pendingFile && apiBase() && !state.uploadId) {
+          try {
+            await ensureServerUpload();
+          } catch (err) {
+            setStatus(err.message || String(err));
+            return;
+          }
         }
         setStep(state.step + 1);
       });
     if (back) back.addEventListener("click", () => setStep(state.step - 1));
     const tab = document.getElementById("tab-automl");
     if (tab) tab.addEventListener("click", () => setStep(state.step));
+    const stepList = document.getElementById("automl-step-list");
+    if (stepList && !stepList._wiredJump) {
+      stepList._wiredJump = true;
+      stepList.addEventListener("click", function (ev) {
+        const li = ev.target.closest("li[data-step]");
+        if (!li) return;
+        const s = Number(li.getAttribute("data-step"));
+        if (!canJumpToStep(s)) {
+          if (s < 7) setStatus("Lengkapi langkah berurutan, atau lompat ke langkah 7 jika sudah punya model.");
+          return;
+        }
+        setStep(s);
+      });
+      stepList.addEventListener("keydown", function (ev) {
+        if (ev.key !== "Enter" && ev.key !== " ") return;
+        const li = ev.target.closest("li[data-step]");
+        if (!li) return;
+        ev.preventDefault();
+        const s = Number(li.getAttribute("data-step"));
+        if (canJumpToStep(s)) setStep(s);
+      });
+    }
   }
 
   window.MigasAutoML = {

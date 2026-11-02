@@ -11,7 +11,8 @@
     if (typeof location !== "undefined" && location.protocol && location.protocol !== "file:") {
       return location.origin;
     }
-    return "";
+    // Local portable default when HTML is opened as file:// while Start_Migas.bat is running
+    return "http://127.0.0.1:5055";
   }
 
   function token() {

@@ -10,11 +10,18 @@
   flex-direction: column;
   gap: 2px;
   align-items: flex-start;
-  padding: 12px 14px;
+  padding: 14px 16px;
   border: 1px dashed #8d8374;
+  border-radius: 10px;
   background: #fffdf9;
   cursor: pointer;
   margin-bottom: 8px;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.dropzone:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .dropzone.hot {

@@ -302,6 +302,30 @@
     return names.map((name, index) => column(name, series[index], FM_COLORS[index % FM_COLORS.length], index));
   }
 
+  function hasPlotValues(plots) {
+    return (plots || []).some((p) =>
+      (p.columns || []).some((c) => (c.values || []).some((v) => v != null && Number(v) !== 0 && Number.isFinite(Number(v))))
+    );
+  }
+
+  /** Built-in default: mud weight by formation (same data shown in a fresh Boxplot). */
+  function applyDefaultData() {
+    const p = emptyPlot("Plot 1");
+    p.title = "Mud Weight Distribution by Formation";
+    p.yLabel = "Mud Weight (unit as recorded)";
+    p.xLabel = "Formation";
+    p.decimalComma = true;
+    p.yMin = null;
+    p.yMax = null;
+    p.show = { box: true, median: true, mean: true, whisker: true, outlier: true, legend: true };
+    p.numbers = { min: false, q1: false, median: false, mean: false, q3: false, max: false, outlier: false };
+    p.columns = sampleColumns();
+    state.plots = [p];
+    state.activePlotId = p.id;
+    pushPlotToActive();
+    persist();
+  }
+
   function niceStep(span) {
     const rough = span / 6;
     if (!(rough > 0)) return 1;
@@ -969,9 +993,10 @@
   }
 
   function loadSample() {
-    state.columns = sampleColumns();
-    persist();
+    applyDefaultData();
+    applyChrome();
     renderTable();
+    renderPlotList();
     requestDraw();
     setStatus("Contoh mud weight dimuat. Tempel data Excel untuk menggantinya.");
   }
@@ -1277,17 +1302,9 @@
   }
 
   hadStored = loadStored();
-  if (!hadStored) {
-    const p = emptyPlot("Plot 1");
-    p.columns = sampleColumns();
-    state.plots = [p];
-    state.activePlotId = p.id;
-    pushPlotToActive();
-  } else if (!state.plots.length) {
-    const p = emptyPlot(state.title || "Plot 1");
-    p.columns = state.columns || [];
-    state.plots = [p];
-    state.activePlotId = p.id;
+  if (!hadStored || !state.plots.length || !hasPlotValues(state.plots)) {
+    applyDefaultData();
+    hadStored = false;
   }
   window.BoxWhisker = { draw, snapshot, load: loadProject };
   document.addEventListener("DOMContentLoaded", init);

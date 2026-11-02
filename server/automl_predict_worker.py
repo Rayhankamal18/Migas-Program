@@ -41,12 +41,13 @@ def main(model_path, rows_path, out_path):
             if missing:
                 out["error"] = "Missing columns: " + ", ".join(missing)
             else:
-                X = df[bundle["features"]].rename(columns=bundle.get("safe_names") or {})
+                X = df[bundle["features"]].rename(columns=bundle.get("safe_names") or {}).copy()
                 for c in X.columns:
-                    try:
-                        X[c] = pd.to_numeric(X[c]).astype("float32")
-                    except Exception:
-                        pass
+                    if pd.api.types.is_numeric_dtype(X[c]):
+                        X[c] = pd.to_numeric(X[c], errors="coerce")
+                    else:
+                        # keep text/categorical for OrdinalEncoder (same as training)
+                        X[c] = X[c].astype(object)
                 proba = bundle["pipeline"].predict_proba(X)
                 names = bundle["class_names"]
                 out["predictions"] = [names[int(i)] for i in proba.argmax(axis=1)]
@@ -80,10 +81,15 @@ def main(model_path, rows_path, out_path):
             X = df[features].copy()
             X = X.rename(columns=bundle.get("safe_names") or {})
             for c in X.columns:
-                try:
-                    X[c] = pd.to_numeric(X[c]).astype("float32")
-                except Exception:
-                    pass  # text column: leave as-is for the encoder
+                if pd.api.types.is_numeric_dtype(X[c]):
+                    X[c] = pd.to_numeric(X[c], errors="coerce").astype("float64")
+                else:
+                    # DataPrepare expects object|category for categoricals (not StringDtype)
+                    coerced = pd.to_numeric(X[c], errors="coerce")
+                    if coerced.notna().mean() >= 0.8:
+                        X[c] = coerced.astype("float64")
+                    else:
+                        X[c] = X[c].astype(object)
             Xp = de.transform(X) if de is not None else X
             cols = bundle.get("prepared_columns")
             if cols:

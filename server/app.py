@@ -138,6 +138,7 @@ def health():
         "ok": True,
         "save_dir": SAVE_DIR,
         "model_dir": MODEL_DIR,
+        "max_upload_mb": MAX_UPLOAD_MB,
         "time": utc_now(),
     })
 
@@ -266,7 +267,7 @@ def automl_model_meta(name):
             meta.update(json.loads(side.read_text(encoding="utf-8")))
         except Exception:
             pass
-    # class_names / features from joblib if missing
+    # class_names / features / schema from joblib if missing
     try:
         import joblib
         bundle = joblib.load(path)
@@ -276,7 +277,33 @@ def automl_model_meta(name):
         meta.setdefault("class_names", bundle.get("class_names"))
         meta.setdefault("best_model_name", bundle.get("best_model_name"))
         meta.setdefault("metric", bundle.get("metric"))
+        meta.setdefault("feature_schema", bundle.get("feature_schema") or {})
         meta["kind"] = bundle.get("kind")
+        # Old models: synthesize a minimal schema from feature names so Gender etc. aren't treated as 0–100
+        if not meta.get("feature_schema") and meta.get("features"):
+            from automl_utils import _CAT_NAME_RE
+            schema = {}
+            for fname in meta["features"]:
+                name_l = str(fname).strip().lower().replace(" ", "_")
+                if _CAT_NAME_RE.search(name_l):
+                    schema[str(fname)] = {
+                        "name": str(fname),
+                        "type": "categorical",
+                        "categories": [],
+                        "reason": "Nama kolom mengisyaratkan kategori (model lama — isi nilai manual / latih ulang).",
+                        "n_unique": 0,
+                    }
+                else:
+                    schema[str(fname)] = {
+                        "name": str(fname),
+                        "type": "numeric",
+                        "min": 0.0,
+                        "max": 100.0,
+                        "min_suggest": 0.0,
+                        "max_suggest": 100.0,
+                        "reason": "Default numerik (model lama tanpa schema).",
+                    }
+            meta["feature_schema"] = schema
     except Exception as e:
         meta["bundle_warning"] = str(e)
     meta["ok"] = True
@@ -300,7 +327,12 @@ def automl_upload():
     size = f.tell()
     f.seek(0)
     if size > MAX_UPLOAD_MB * 1024 * 1024:
-        return jsonify({"ok": False, "error": f"File too large (max {MAX_UPLOAD_MB} MB)."}), 400
+        size_mb = round(size / (1024 * 1024), 1)
+        return jsonify({
+            "ok": False,
+            "error": f"File terlalu besar ({size_mb} MB). Batas unggah: {MAX_UPLOAD_MB} MB. "
+                     f"Naikkan lewat env MIGAS_MAX_UPLOAD_MB jika perlu.",
+        }), 400
     job_id = uuid.uuid4().hex[:12]
     dest = Path(UPLOAD_DIR) / f"{job_id}.csv"
     f.save(dest)
@@ -338,23 +370,17 @@ def automl_upload():
         # sep=None → python engine sniffs comma/semicolon/tab
         df = pd.read_csv(dest, sep=None, engine="python", encoding="utf-8-sig")
         df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
-        cols = []
-        for c in df.columns:
-            s = df[c]
-            missing = int(s.isna().sum())
-            if pd.api.types.is_numeric_dtype(s):
-                ctype = "numeric"
-            else:
-                ctype = "text"
-            cols.append({"name": str(c), "type": ctype, "missing": missing})
+        from automl_utils import profile_dataframe
+
+        profile = profile_dataframe(df)
         head = df.head(5).astype(object).where(pd.notnull(df.head(5)), None).to_dict(orient="records")
         tail = df.tail(5).astype(object).where(pd.notnull(df.tail(5)), None).to_dict(orient="records")
         payload = clean({
             "ok": True,
             "upload_id": job_id,
-            "rows": int(len(df)),
-            "cols": int(df.shape[1]),
-            "columns": cols,
+            "rows": profile["rows"],
+            "cols": profile["cols"],
+            "columns": profile["columns"],
             "head": head,
             "tail": tail,
         })
@@ -449,22 +475,20 @@ def automl_use_upload():
                 pass
             return obj
 
-        df = pd.read_csv(dest, sep=None, engine="python")
-        cols = []
-        for c in df.columns:
-            s = df[c]
-            missing = int(s.isna().sum())
-            ctype = "numeric" if pd.api.types.is_numeric_dtype(s) else "text"
-            cols.append({"name": str(c), "type": ctype, "missing": missing})
+        df = pd.read_csv(dest, sep=None, engine="python", encoding="utf-8-sig")
+        df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
+        from automl_utils import profile_dataframe
+
+        profile = profile_dataframe(df)
         head = df.head(5).astype(object).where(pd.notnull(df.head(5)), None).to_dict(orient="records")
         tail = df.tail(5).astype(object).where(pd.notnull(df.tail(5)), None).to_dict(orient="records")
         payload = clean({
             "ok": True,
             "upload_id": job_id,
             "source_name": name,
-            "rows": int(len(df)),
-            "cols": int(df.shape[1]),
-            "columns": cols,
+            "rows": profile["rows"],
+            "cols": profile["cols"],
+            "columns": profile["columns"],
             "head": head,
             "tail": tail,
         })
@@ -492,12 +516,35 @@ def automl_train():
     timeout = int(body.get("timeout") or 300)
     models_names = body.get("models_names") or None
     force_classification = bool(body.get("force_classification"))
+    split_mode = (body.get("split_mode") or "auto").strip().lower()
+    train_upload_id = body.get("train_upload_id") or None
+    test_upload_id = body.get("test_upload_id") or None
 
-    if not upload_id or not SAFE_NAME.match(str(upload_id)):
-        return jsonify({"ok": False, "error": "Invalid upload_id."}), 400
-    csv_path = Path(UPLOAD_DIR) / f"{upload_id}.csv"
-    if not csv_path.is_file():
-        return jsonify({"ok": False, "error": "CSV not found. Upload again."}), 404
+    def resolve_upload(uid, label):
+        if not uid or not SAFE_NAME.match(str(uid)):
+            return None, f"Invalid {label}."
+        path = Path(UPLOAD_DIR) / f"{uid}.csv"
+        if not path.is_file():
+            return None, f"{label} CSV not found: {uid}"
+        return path, None
+
+    # Primary CSV (step 1) — still required for auto mode; files mode may use train_upload_id
+    if split_mode == "files":
+        train_uid = train_upload_id or upload_id
+        train_path, err = resolve_upload(train_uid, "train")
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
+        test_path, err = resolve_upload(test_upload_id, "test")
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
+        csv_path = train_path
+    else:
+        csv_path, err = resolve_upload(upload_id, "upload")
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
+        train_path = None
+        test_path = None
+
     if not target or not features:
         return jsonify({"ok": False, "error": "Choose target Y and at least one input X."}), 400
 
@@ -518,6 +565,9 @@ def automl_train():
     cfg = {
         "job_id": job_id,
         "csv_path": str(csv_path),
+        "train_csv_path": str(train_path) if train_path else None,
+        "test_csv_path": str(test_path) if test_path else None,
+        "split_mode": split_mode,
         "target": target,
         "features": features,
         "task": task,
@@ -685,101 +735,15 @@ def automl_predict():
     if not isinstance(rows, list) or not rows:
         return jsonify({"ok": False, "error": "rows must be a non-empty list of objects."}), 400
 
-    # --- fast path (same process) ---
+    # --- fast path (same process): supports multiclass pipeline + Alex opt_zip/de_zip ---
     try:
-        import numpy as np
-        import pandas as pd
         import joblib
+        from automl_runtime import predict_bundle
+
         bundle = joblib.load(path)
-        features = list(bundle.get("features") or [])
-        target = bundle.get("target")
-        task = bundle.get("task") or "regression"
-        class_names = bundle.get("class_names")
-        safe_names = bundle.get("safe_names") or {}
-        # drop target if client sent it
-        clean_rows = []
-        for r in rows:
-            if not isinstance(r, dict):
-                continue
-            rr = {k: v for k, v in r.items() if k != target and k in features}
-            # fill missing features with None
-            for f in features:
-                if f not in rr:
-                    rr[f] = None
-            clean_rows.append(rr)
-        if not clean_rows:
-            return jsonify({"ok": False, "error": "No valid feature rows."}), 400
-        df = pd.DataFrame(clean_rows)
-        # rename to safe internal names if needed
-        if safe_names:
-            df = df.rename(columns=safe_names)
-            feat_cols = [safe_names.get(f, f) for f in features]
-        else:
-            feat_cols = features
-        missing = [c for c in feat_cols if c not in df.columns]
-        if missing:
-            return jsonify({"ok": False, "error": f"Missing columns: {missing}"}), 400
-        X = df[feat_cols].copy()
-        for c in X.columns:
-            if pd.api.types.is_numeric_dtype(X[c]):
-                X[c] = pd.to_numeric(X[c], errors="coerce")
-            else:
-                X[c] = X[c].astype(object)
-
-        if bundle.get("kind") == "multiclass_lgbm":
-            pipe = bundle["pipeline"]
-            proba = pipe.predict_proba(X)
-            labs = proba.argmax(axis=1)
-            names = class_names or [str(i) for i in range(proba.shape[1])]
-            preds = [names[int(i)] for i in labs]
-            out = {
-                "ok": True,
-                "predictions": preds,
-                "probabilities": proba.tolist(),
-                "class_names": names,
-                "target": target,
-                "features": features,
-                "task": task,
-            }
-            return jsonify(out)
-
-        model = bundle.get("model")
-        de = bundle.get("data_prepare")
-        if de is not None:
-            try:
-                Xp = de.transform(X)
-            except Exception:
-                Xp = X
-        else:
-            Xp = X
-        cols = bundle.get("prepared_columns")
-        if cols:
-            Xp = Xp.reindex(columns=cols, fill_value=0)
-        p = np.asarray(model.predict(Xp)).reshape(-1)
-        if task == "classification":
-            # scores may be proba for positive class
-            if p.ndim > 1:
-                p = p[:, -1]
-            lab = (p >= 0.5).astype(int)
-            names = class_names or ["0", "1"]
-            preds = [names[int(i)] if int(i) < len(names) else str(i) for i in lab]
-            out = {
-                "ok": True,
-                "predictions": preds,
-                "probabilities": [[float(1 - v), float(v)] for v in p],
-                "class_names": names,
-                "target": target,
-                "features": features,
-                "task": task,
-            }
-        else:
-            out = {
-                "ok": True,
-                "predictions": [float(v) for v in p],
-                "target": target,
-                "features": features,
-                "task": task,
-            }
+        out = predict_bundle(bundle, str(path), rows)
+        if not out.get("ok"):
+            return jsonify(out), 400
         return jsonify(out)
     except Exception as err:
         # fallback to worker for awkward models
@@ -799,6 +763,12 @@ def automl_predict():
                 )
                 if op.is_file():
                     data = json.loads(op.read_text(encoding="utf-8"))
+                    # Surface in-process failure so we can diagnose; worker result still used
+                    if isinstance(data, dict):
+                        data.setdefault(
+                            "inprocess_error",
+                            f"{type(err).__name__}: {err}",
+                        )
                     return jsonify(data)
                 return jsonify({
                     "ok": False,
@@ -855,7 +825,8 @@ def automl_optimize_inputs():
         class_names = bundle.get("class_names")
         safe_names = bundle.get("safe_names") or {}
 
-        # only numeric free variables
+        feature_schema = bundle.get("feature_schema") or {}
+        # free variables: numeric (min/max) and/or categorical (choices)
         free = []
         for v in variables:
             name = v.get("name")
@@ -863,61 +834,49 @@ def automl_optimize_inputs():
                 continue
             if not v.get("enabled", True):
                 continue
-            try:
-                lo = float(v["min"])
-                hi = float(v["max"])
-            except Exception:
-                continue
-            if hi < lo:
-                lo, hi = hi, lo
-            free.append({"name": name, "min": lo, "max": hi})
+            vtype = (v.get("type") or "").strip().lower()
+            schema_t = (feature_schema.get(name) or {}).get("type")
+            if not vtype:
+                vtype = "categorical" if schema_t == "categorical" else "numeric"
+            if vtype == "categorical":
+                choices = v.get("choices")
+                if not choices:
+                    choices = (feature_schema.get(name) or {}).get("categories") or []
+                choices = [c for c in choices if c is not None and str(c) != ""]
+                # dedupe preserve order
+                seen = set()
+                uniq = []
+                for c in choices:
+                    key = str(c)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    uniq.append(c)
+                if len(uniq) < 1:
+                    continue
+                free.append({"name": name, "type": "categorical", "choices": uniq})
+            else:
+                try:
+                    lo = float(v["min"])
+                    hi = float(v["max"])
+                except Exception:
+                    continue
+                if hi < lo:
+                    lo, hi = hi, lo
+                free.append({"name": name, "type": "numeric", "min": lo, "max": hi})
         if not free:
-            return jsonify({"ok": False, "error": "Enable at least one numeric input with min and max."}), 400
+            return jsonify({
+                "ok": False,
+                "error": "Aktifkan minimal satu input: numerik (min/max) atau kategorikal (pilih nilai, mis. male/female).",
+            }), 400
+
+        from automl_runtime import predict_one_score
 
         def predict_one(xdict):
-            """Returns (score_for_objective, display_y, proba_or_none)."""
+            """Returns (proba_or_y, display_y, class_names_or_None) via shared loader."""
             row = dict(fixed)
             row.update(xdict)
-            data = {f: row.get(f) for f in features}
-            df = pd.DataFrame([data])
-            if safe_names:
-                df = df.rename(columns=safe_names)
-                cols = [safe_names.get(f, f) for f in features]
-            else:
-                cols = features
-            X = df[cols].copy()
-            for c in X.columns:
-                if pd.api.types.is_numeric_dtype(X[c]):
-                    X[c] = pd.to_numeric(X[c], errors="coerce")
-                else:
-                    X[c] = X[c].astype(object)
-
-            if bundle.get("kind") == "multiclass_lgbm":
-                pipe = bundle["pipeline"]
-                proba = np.asarray(pipe.predict_proba(X)[0], dtype=float)
-                names = list(class_names) if class_names else [str(i) for i in range(len(proba))]
-                pred_label = names[int(np.argmax(proba))]
-                return proba, pred_label, names
-
-            model = bundle.get("model")
-            de = bundle.get("data_prepare")
-            Xp = de.transform(X) if de is not None else X
-            prep = bundle.get("prepared_columns")
-            if prep:
-                Xp = Xp.reindex(columns=prep, fill_value=0)
-            p = np.asarray(model.predict(Xp)).reshape(-1)
-            # Binary AutoML-Alex: predict often returns positive-class score
-            if task == "classification":
-                score = float(p[0])
-                names = list(class_names) if class_names else ["0", "1"]
-                # map score to 2-class proba when possible
-                if len(names) == 2:
-                    proba = np.array([1.0 - score, score], dtype=float)
-                else:
-                    proba = None
-                pred_label = names[1] if score >= 0.5 and len(names) > 1 else names[0]
-                return proba if proba is not None else np.array([score]), pred_label, names
-            return float(p[0]), float(p[0]), None
+            return predict_one_score(bundle, str(path), row)
 
         def class_index(names, wanted):
             if not names or wanted is None:
@@ -981,16 +940,23 @@ def automl_optimize_inputs():
                 for v in free:
                     n = v["name"]
                     w = float(cost_weights.get(n) or 0.0)
-                    if w <= 0:
+                    if w <= 0 or v.get("type") == "categorical":
                         continue
-                    span = v["max"] - v["min"] or 1.0
+                    span = (v["max"] - v["min"]) or 1.0
                     c += w * ((float(xdict[n]) - v["min"]) / span)
                 loss = loss + cost_strength * c
             return float(loss), yhat, display
 
         names = [v["name"] for v in free]
-        bounds_lo = np.array([v["min"] for v in free], dtype=float)
-        bounds_hi = np.array([v["max"] for v in free], dtype=float)
+
+        def sample_random(rng):
+            xdict = {}
+            for v in free:
+                if v.get("type") == "categorical":
+                    xdict[v["name"]] = v["choices"][int(rng.integers(0, len(v["choices"])))]
+                else:
+                    xdict[v["name"]] = float(rng.uniform(v["min"], v["max"]))
+            return xdict
 
         best_x = None
         best_loss = float("inf")
@@ -1002,16 +968,16 @@ def automl_optimize_inputs():
         try:
             import nevergrad as ng
             engine = "nevergrad"
-            instr = ng.p.Instrumentation(
-                **{
-                    v["name"]: ng.p.Scalar(lower=v["min"], upper=v["max"])
-                    for v in free
-                }
-            )
+            params = {}
+            for v in free:
+                if v.get("type") == "categorical":
+                    params[v["name"]] = ng.p.Choice(v["choices"])
+                else:
+                    params[v["name"]] = ng.p.Scalar(lower=v["min"], upper=v["max"])
+            instr = ng.p.Instrumentation(**params)
             opt = ng.optimizers.NGOpt(parametrization=instr, budget=budget)
             for i in range(budget):
                 cand = opt.ask()
-                # cand.kwargs or cand.value depending on version
                 if hasattr(cand, "kwargs") and cand.kwargs:
                     xdict = dict(cand.kwargs)
                 else:
@@ -1019,22 +985,20 @@ def automl_optimize_inputs():
                     if isinstance(val, dict):
                         xdict = dict(val)
                     else:
-                        # positional
-                        xdict = {names[j]: float(val[j]) for j in range(len(names))}
+                        xdict = {}
+                        for j, nm in enumerate(names):
+                            xdict[nm] = val[j] if hasattr(val, "__getitem__") else val
                 loss, yhat, display = objective_scalar(xdict)
                 opt.tell(cand, loss)
                 history.append({"loss": loss, "y": yhat, "display": display})
                 if loss < best_loss:
                     best_loss, best_y, best_x = loss, yhat, xdict
                     best_display = display
-        except Exception as ng_err:
+        except Exception:
             engine = "random"
             rng = np.random.default_rng(42)
             for i in range(budget):
-                xdict = {
-                    v["name"]: float(rng.uniform(v["min"], v["max"]))
-                    for v in free
-                }
+                xdict = sample_random(rng)
                 loss, yhat, display = objective_scalar(xdict)
                 history.append({"loss": loss, "y": yhat, "display": display})
                 if loss < best_loss:

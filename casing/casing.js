@@ -1654,11 +1654,11 @@
 
   function activate(tab) {
     const names = {
-      azimuth: { panel: "panel-azimuth", actions: "actions-azimuth", tab: "tab-azimuth", title: "Chart Azimuth & Inklinasi" },
+      azimuth: { panel: "panel-azimuth", actions: "actions-azimuth", tab: "tab-azimuth", title: "Azimuth & Inklinasi" },
       casing: { panel: "panel-casing", actions: "actions-casing", tab: "tab-casing", title: "Casing Setting Depth" },
       drilling: { panel: "panel-drilling", actions: "actions-drilling", tab: "tab-drilling", title: "Drilling Summary" },
       boxplot: { panel: "panel-boxplot", actions: "actions-boxplot", tab: "tab-boxplot", title: "Box & Whisker" },
-      ai: { panel: "panel-ai", actions: "actions-ai", tab: "tab-ai", title: "AI Suggestion" },
+      ai: { panel: "panel-ai", actions: "actions-ai", tab: "tab-ai", title: "Saran AI" },
       automl: { panel: "panel-automl", actions: "actions-automl", tab: "tab-automl", title: "AutoML" }
     };
     const active = names[tab] ? tab : "azimuth";
