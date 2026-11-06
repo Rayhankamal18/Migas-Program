@@ -1887,12 +1887,158 @@
     }));
   }
 
+  /** Render skema casing ke canvas lain tanpa mengubah state tab Casing. */
+  function renderPreview(canvas, data, opts) {
+    if (!canvas) return { empty: true, w: 760, h: 420 };
+    const options = opts || {};
+    const backup = {
+      title: state.title,
+      unit: state.unit,
+      decimalComma: state.decimalComma,
+      tvdMax: state.tvdMax,
+      endLabel: state.endLabel,
+      formations: state.formations,
+      wells: state.wells,
+      viewMode: state.viewMode,
+      activeWellId: state.activeWellId,
+      showPpfg: state.showPpfg
+    };
+    try {
+      const src = data || {};
+      state.title = src.title != null ? String(src.title) : backup.title;
+      state.unit = src.unit === "m" ? "m" : "ft";
+      state.decimalComma = !!src.decimalComma;
+      state.tvdMax = src.tvdMax == null ? null : numberOrNull(src.tvdMax);
+      state.endLabel = src.endLabel || backup.endLabel || "End of Well";
+      state.formations = Array.isArray(src.formations)
+        ? src.formations.map((fm) => ({
+            id: fm.id || uid(),
+            name: fm.name || "",
+            topTvd: numberOrNull(fm.topTvd),
+            baseTvd: numberOrNull(fm.baseTvd),
+            color: fm.color || "#7A3412"
+          }))
+        : [];
+      state.wells = Array.isArray(src.wells)
+        ? src.wells.map((well, index) => ({
+            id: well.id || uid(),
+            name: well.name || "",
+            color: wellColor(well.color, index),
+            tdMd: numberOrNull(well.tdMd),
+            tdTvd: numberOrNull(well.tdTvd),
+            casings: Array.isArray(well.casings) ? well.casings.map(normalizeCasing) : [],
+            selected: well.selected !== false,
+            pp: Array.isArray(well.pp)
+              ? well.pp
+                  .map((p) => ({ depthTvd: numberOrNull(p.depthTvd), value: numberOrNull(p.value) }))
+                  .filter((p) => p.depthTvd != null && p.value != null)
+              : [],
+            fg: Array.isArray(well.fg)
+              ? well.fg
+                  .map((p) => ({ depthTvd: numberOrNull(p.depthTvd), value: numberOrNull(p.value) }))
+                  .filter((p) => p.depthTvd != null && p.value != null)
+              : []
+          }))
+        : [];
+      state.viewMode = options.viewMode === "one" || options.viewMode === "multi" ? options.viewMode : "selected";
+      state.activeWellId = options.activeWellId || (state.wells[0] && state.wells[0].id) || null;
+      state.showPpfg = options.showPpfg != null ? !!options.showPpfg : false;
+      return renderCanvas(canvas, options.scale || 2);
+    } finally {
+      state.title = backup.title;
+      state.unit = backup.unit;
+      state.decimalComma = backup.decimalComma;
+      state.tvdMax = backup.tvdMax;
+      state.endLabel = backup.endLabel;
+      state.formations = backup.formations;
+      state.wells = backup.wells;
+      state.viewMode = backup.viewMode;
+      state.activeWellId = backup.activeWellId;
+      state.showPpfg = backup.showPpfg;
+    }
+  }
+
+  async function exportFromData(data, kind, fileStemOverride) {
+    const canvas = document.createElement("canvas");
+    const figure = renderPreview(canvas, data, { viewMode: "selected", scale: 2, showPpfg: false });
+    if (!figure || figure.empty) throw new Error("Belum ada data untuk diunduh.");
+    const stemRaw = (fileStemOverride || (data && data.title) || "ai-casing-proposal").trim() || "ai-casing-proposal";
+    const stem = stemRaw.replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ").slice(0, 80);
+    if (kind === "pdf") {
+      if (!window.jspdf || !window.jspdf.jsPDF) throw new Error("Pustaka PDF belum termuat.");
+      const { jsPDF } = window.jspdf;
+      const aspect = figure.w / figure.h;
+      const wide = figure.w > 1100;
+      const format = wide ? "a3" : "a4";
+      const orientation = aspect >= 1 ? "landscape" : "portrait";
+      const pdf = new jsPDF({ orientation, unit: "mm", format });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const margin = 8;
+      const maxW = pageW - margin * 2;
+      const maxH = pageH - margin * 2;
+      const ratio = figure.w / figure.h;
+      let w = maxW;
+      let h = w / ratio;
+      if (h > maxH) {
+        h = maxH;
+        w = h * ratio;
+      }
+      const x = (pageW - w) / 2;
+      const y = (pageH - h) / 2;
+      pdf.addImage(canvas.toDataURL("image/png"), "PNG", x, y, w, h);
+      pdf.setProperties({ title: stem, subject: "AI casing proposal" });
+      pdf.save(stem + ".pdf");
+      return;
+    }
+    const type = kind === "jpg" ? "image/jpeg" : "image/png";
+    const blob = await canvasBlob(canvas, type, 0.95);
+    if (!blob) throw new Error("Berkas gagal dibuat.");
+    downloadBlob(blob, stem + (kind === "jpg" ? ".jpg" : ".png"));
+  }
+
+  function addOrReplaceWell(well, opts) {
+    const options = opts || {};
+    const name = ((well && well.name) || "").trim() || "Proposed well";
+    const existing = options.replaceByName
+      ? state.wells.find((w) => ((w.name || "").trim().toLowerCase() === name.toLowerCase()))
+      : null;
+    const color = (well && well.color) || (existing && existing.color) || WELL_COLORS[state.wells.length % WELL_COLORS.length];
+    const normalized = {
+      id: existing ? existing.id : uid(),
+      name,
+      color: wellColor(color, state.wells.length),
+      tdMd: numberOrNull(well && well.tdMd),
+      tdTvd: numberOrNull(well && well.tdTvd),
+      casings: Array.isArray(well && well.casings) ? well.casings.map(normalizeCasing) : [],
+      selected: true,
+      pp: existing && Array.isArray(existing.pp) ? existing.pp.slice() : [],
+      fg: existing && Array.isArray(existing.fg) ? existing.fg.slice() : []
+    };
+    if (existing) {
+      const idx = state.wells.indexOf(existing);
+      state.wells[idx] = normalized;
+    } else {
+      state.wells.push(normalized);
+    }
+    state.activeWellId = normalized.id;
+    openWells.add(normalized.id);
+    persist();
+    renderWells();
+    renderPpfgPreview();
+    requestDraw();
+    return normalized;
+  }
+
   window.CasingSetting = {
     draw,
     activate,
     snapshot,
     load: loadProject,
     wells: publishedWells,
+    renderPreview,
+    exportFromData,
+    addOrReplaceWell,
     meta() {
       return { unit: state.unit === "m" ? "m" : "ft", endLabel: (state.endLabel || "").trim() || "End of Well" };
     }
