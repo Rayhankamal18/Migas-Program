@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Gambar Sumur</title>
-  <link rel="stylesheet" href="shared/styles.css?v=20261102g" />
+  <link rel="stylesheet" href="shared/styles.css?v=20261106b" />
   <link rel="stylesheet" href="azimuth/azimuth.css?v=20261102d" />
   <link rel="stylesheet" href="casing/casing.css?v=20261102d" />
   <link rel="stylesheet" href="drilling/drilling.css?v=20261102d" />
@@ -73,8 +73,10 @@
         <button type="button" class="btn ghost" id="bx-jpg">JPG</button>
         <button type="button" class="btn" id="bx-pdf">PDF</button>
       </div>
-      <div class="action-group" data-label="Alat" id="actions-ai" hidden>
-        <span class="micro" style="margin:0">Hasil AI tampil di panel kanan</span>
+      <div class="action-group" data-label="Usulan casing" id="actions-ai" hidden>
+        <button type="button" class="btn ghost" id="ai-hdr-csg-png">PNG</button>
+        <button type="button" class="btn ghost" id="ai-hdr-csg-jpg">JPG</button>
+        <button type="button" class="btn" id="ai-hdr-csg-pdf">PDF</button>
       </div>
       <div class="action-group" data-label="Alat" id="actions-automl" hidden>
         <span class="micro" style="margin:0">Ikuti langkah 1–8 di panel kiri</span>
@@ -636,7 +638,7 @@
       </section>
       <section>
         <h2>2. Usulan casing depth</h2>
-        <p class="micro">Semua sumur di proyek dipakai sebagai offset untuk mengusulkan casing sumur baru.</p>
+        <p class="micro">Offset wells di proyek dipakai untuk mengusulkan angka shoe. Hasil muncul di panel kanan (bisa diedit + pratinjau rumus Casing), lalu diekspor atau disalin ke tab Casing Setting Depth.</p>
         <label>Nama sumur proposed
           <input id="ai-proposed-name" type="text" placeholder="OOA-5" spellcheck="false" />
         </label>
@@ -660,7 +662,7 @@
         <div id="ai-casing-results">
           <div class="empty-state">
             <strong>Belum ada usulan casing</strong>
-            <span>Isi nama sumur proposed, lalu generate.</span>
+            <span>Isi nama sumur proposed, lalu generate. Angka usulan bisa diedit di sini sebelum ditambah ke tab Casing.</span>
           </div>
         </div>
       </section>
@@ -698,9 +700,10 @@
           <label>API Key
             <input id="set-apikey" type="password" placeholder="sk-... (kosongkan jika Demo)" spellcheck="false" autocomplete="off" />
           </label>
-          <label>Endpoint (opsional / custom)
-            <input id="set-endpoint" type="text" placeholder="https://api.openai.com/v1/chat/completions" spellcheck="false" />
+          <label>Base URL (dari penyedia API)
+            <input id="set-endpoint" type="text" placeholder="https://api.openai.com/v1" spellcheck="false" />
           </label>
+          <p class="micro">Tempel Base URL saat beli key (biasanya berakhir <code>/v1</code>). Path <code>/chat/completions</code> ditambahkan otomatis. Kosongkan untuk endpoint bawaan provider. Jangan diisi di “API base URL” di bawah — itu untuk server aplikasi.</p>
         </section>
         <section class="field-group">
           <h3>Server &amp; folder data</h3>
@@ -806,11 +809,11 @@
 <script src="shared/vendor/xlsx.full.min.js"></script>
   <script src="shared/vendor/jspdf.umd.min.js"></script>
   <script src="azimuth/azimuth.js?v=20261102d"></script>
-  <script src="casing/casing.js?v=20261102d"></script>
+  <script src="casing/casing.js?v=20261106b"></script>
   <script src="drilling/drilling.js?v=20261102e"></script>
   <script src="boxplot/boxplot.js?v=20261102f"></script>
   <script src="shared/storage.js?v=20261102d"></script>
   <script src="automl/automl.js?v=20261102l"></script>
-  <script src="ai/ai.js?v=20261102e"></script>
+  <script src="ai/ai.js?v=20261106b"></script>
 </body>
 </html>
