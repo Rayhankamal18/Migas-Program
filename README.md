@@ -1,42 +1,58 @@
-# Gambar Sumur
+# Migas Program
 
-Aplikasi gambar sumur di browser untuk membuat chart azimuth dan inklinasi, casing setting depth, serta drilling summary. Data diisi dari Excel atau langsung di layar, lalu gambar bisa diunduh sebagai PNG, JPG, atau PDF.
+Browser-based petroleum and well-data toolkit: azimuth/inclination charts, casing setting depth, drilling summary, boxplots, AI suggestions, AutoML, and Graph Grabber.
 
-## Cara membuka
+## Features
 
-Klik dua kali `Buka Chart.bat`, atau buka `Migas Program.html` di browser. Tidak perlu memasang server.
+- Azimuth & inclination polar charts
+- Casing setting depth and formations
+- Drilling time vs depth summary
+- Box-and-whisker plots
+- AutoML: train saved models from CSV
+- **Memory-safe CSV predictions:** CSV rows are predicted one at a time with live percentage and exact failed-row errors. Large files do not become one huge prediction request.
+- **Graph Grabber:** upload a chart image, enter axis values, tap/click X1 → X2 → Y1 → Y2 to calibrate. Blue axis lines show calibration. Tap/click curve points to see live X/Y table. Export `point,x,y` CSV.
+- Graph Grabber supports mouse-wheel or slider zoom, drag-to-pan, Fit reset, desktop and phone touch controls.
 
-## Isi program
+## Run
 
-- **Azimuth Polar Chart** — busur azimuth dan inklinasi per sumur. Data bisa diunggah dari Excel (`.xlsx`, `.xls`, `.csv`) atau diisi manual.
-- **Casing Setting Depth** — rangkaian casing dan liner terhadap kedalaman, dengan kolom formasi di samping gambar.
-- **Drilling Summary** — grafik waktu terhadap kedalaman (ft-MD atau ft-TVD), lengkap dengan formasi, casing, dan tanda masalah sumur.
-- **Box & Whisker** — sebaran nilai per kolom, misalnya mud weight per formasi. Salin tabel dari Excel beserta header; header menjadi sumbu X. Warna tiap kolom memakai palet formasi dan bisa diubah.
+### Windows
 
-## Drilling Summary
+Run `Start_Migas.bat`.
 
-Di bawah pratinjau ada keterangan yang bisa dinyalakan atau dimatikan. Tiap tombol menyembunyikan garis kedalaman atau satu jenis masalah dari grafik. Angka di sampingnya menghitung masalah yang sedang menyala. Kalau semua jenis menyala, semua masalah dihitung. Kalau hanya sebagian, yang dihitung hanya jenis yang menyala. Mematikan garis kedalaman tidak mengurangi angka itu.
+### Linux / VPS
 
-Angka dan tombol itu berada di luar gambar. Unduhan hanya berisi grafik. Keterangan di dalam grafik diletakkan di tengah, di bawah sumbu Day.
+```bash
+python3 launcher.py
+```
 
-## Simpan dan buka lagi
+Open the URL shown by the launcher. For the AutoML backend, use the project server entrypoint under `server/` as described in `SETUP_VPS.md`.
 
-**Simpan** menulis satu berkas JSON untuk ketiga chart. **Buka** memuat berkas itu kembali. Isian terakhir juga tersimpan di browser lewat local storage.
+## Graph Grabber workflow
 
-## Multi-well Drilling Summary (update 2026-10-26)
+1. Open **Graph Grabber**.
+2. Upload a graph image.
+3. Enter X1, X2, Y1, Y2 numeric values.
+4. Click/tap each corresponding location on the image in that order.
+5. Drag to pan. Zoom using mouse wheel or slider.
+6. Click/tap curve locations. The X/Y table updates immediately.
+7. Download CSV.
 
-Drilling Summary now supports multiple wells:
+## AutoML CSV prediction
 
-- **Tambah sumur / Duplikat** — each well keeps its own progress, events, formations, TD, and casing link.
-- **Satu sumur** — edit the active well (click a well in the list to switch without losing data).
-- **Bandingkan semua** — overlay progress curves of all visible wells on one chart (toggle eye checkbox per well).
-- **Kosongkan** — clears only the active well; other wells stay intact.
-- Project JSON and localStorage remain backward-compatible with older single-well files.
+Choose **Predict from CSV** in AutoML. The UI processes and reports each row as it completes. If one row fails, the UI reports its 1-based row number and stops, preserving clear diagnosis rather than exhausting memory.
 
-## 2026-10-29 updates
+## Structure
 
-- **Save / Load** (device + VPS via API)
-- **Box & Whisker multi-plot** (add plots without deleting)
-- **AutoML** section (AutoML-Alex on VPS)
+- `automl/` — AutoML UI
+- `server/` — Flask and model workers
+- `grabber/` — browser graph digitizer
+- `azimuth/`, `casing/`, `drilling/`, `boxplot/`, `ai/` — feature modules
+- `shared/` — common assets
 
-See `SETUP_VPS.md`.
+## Upstream
+
+Forked from [Rayhankamal18/Migas-Program](https://github.com/Rayhankamal18/Migas-Program).
+
+## License
+
+See upstream repository license.

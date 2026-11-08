@@ -2755,8 +2755,11 @@
         state.predIncludeProba = proba.checked;
       });
 
-    const runPredict = async (rows) => {
+    const runPredict = async (rows, streamRows) => {
       const base = apiBase();
+      // ponytail: CSV mode deliberately sends exactly one row/request; protects browser + server RAM.
+      const streaming = !!streamRows;
+      const total = rows.length;
       const model = document.getElementById("am-model-name").value.trim();
       const busy = document.getElementById("am-pred-busy");
       const out = document.getElementById("am-pred-out");
@@ -2774,12 +2777,30 @@
       setStatus("Predicting…");
       const t0 = Date.now();
       try {
-        const res = await fetch(base + "/api/automl/predict", {
-          method: "POST",
-          headers: headers(true),
-          body: JSON.stringify({ model_name: model, rows: clean }),
-        });
-        const data = await res.json();
+        let data;
+        if (streaming) {
+          const predictions = [], probabilities = [];
+          for (let i = 0; i < clean.length; i += 1) {
+            const pct = Math.floor((i / total) * 100);
+            if (busy) busy.textContent = "Predicting CSV: " + pct + "% (row " + (i + 1) + " / " + total + ")";
+            setStatus("Predicting CSV: " + pct + "% — row " + (i + 1) + " of " + total);
+            const res = await fetch(base + "/api/automl/predict", {
+              method: "POST", headers: headers(true),
+              body: JSON.stringify({ model_name: model, rows: [clean[i]] }),
+            });
+            const one = await res.json();
+            if (!res.ok || !one.ok) throw new Error("Row " + (i + 1) + ": " + (one.error || "Predict failed"));
+            predictions.push(one.predictions[0]);
+            if (one.probabilities) probabilities.push(one.probabilities[0]);
+          }
+          data = { ok: true, predictions: predictions, probabilities: probabilities.length ? probabilities : undefined };
+        } else {
+          const res = await fetch(base + "/api/automl/predict", {
+            method: "POST", headers: headers(true),
+            body: JSON.stringify({ model_name: model, rows: clean }),
+          });
+          data = await res.json();
+        }
         if (!data.ok) {
           if (out) out.innerHTML = "<p class='status'>" + (data.error || "Predict failed") + "</p>";
           setStatus(data.error || "Predict failed");
@@ -2828,7 +2849,7 @@
         state.predRows = rows;
         state.predResults = null;
         renderPredTable();
-        await runPredict(rows);
+        await runPredict(rows, true);
       });
 
     const dl = document.getElementById("am-dl-pred");

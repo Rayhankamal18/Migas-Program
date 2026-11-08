@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="casing/casing.css?v=20261102d" />
   <link rel="stylesheet" href="drilling/drilling.css?v=20261102d" />
   <link rel="stylesheet" href="boxplot/boxplot.css?v=20261102d" />
+  <link rel="stylesheet" href="grabber/grabber.css?v=20261108a" />
 </head>
 <body>
   <header class="topbar">
@@ -41,6 +42,10 @@
         <button type="button" class="tab" id="tab-automl" role="tab" aria-selected="false" aria-controls="panel-automl" title="Latih model dari CSV">
           <span class="tab-label">AutoML</span>
           <span class="tab-sub">Train &amp; predict</span>
+        </button>
+        <button type="button" class="tab" id="tab-grabber" role="tab" aria-selected="false" aria-controls="panel-grabber" title="Digitize graph image">
+          <span class="tab-label">Graph Grabber</span>
+          <span class="tab-sub">Image to CSV</span>
         </button>
       </nav>
     </div>
@@ -806,6 +811,17 @@
     </main>
   </div>
 
+  <div class="layout wide" id="panel-grabber" role="tabpanel" hidden>
+    <aside class="panel"><section class="feature-box gg-controls">
+      <h2>Graph Grabber</h2><p class="gg-note">Set values. Tap/click X1, X2, Y1, Y2; blue axis lines appear. Tap/click curve points. Drag image to pan; mouse wheel or slider zooms. Works on phone.</p>
+      <label class="dropzone"><input id="gg-file" type="file" accept="image/*"/><strong>Upload graph image</strong></label>
+      <div class="gg-cal"><label>X1 value<input id="gg-x1" type="number" step="any" value="0"/></label><label>X2 value<input id="gg-x2" type="number" step="any" value="1"/></label><label>Y1 value<input id="gg-y1" type="number" step="any" value="0"/></label><label>Y2 value<input id="gg-y2" type="number" step="any" value="1"/></label></div>
+      <div class="gg-zoom"><span>Zoom</span><input id="gg-zoom" type="range" min="20" max="1200" value="100"/><button class="btn ghost" id="gg-fit">Fit</button></div>
+      <button class="btn" id="gg-download">Download X,Y CSV</button><button class="btn ghost" id="gg-clear">Clear points</button><button class="btn ghost" id="gg-reset">Reset calibration</button><p class="status" id="gg-status">Upload graph image.</p>
+    </section></aside>
+    <main><canvas id="gg-canvas"></canvas><section class="gg-table"><div class="gg-count" id="gg-count">0 points</div><table><thead><tr><th>#</th><th>X</th><th>Y</th></tr></thead><tbody id="gg-points"><tr><td colspan="3">Calibrate axis, then click points.</td></tr></tbody></table></section></main>
+  </div>
+
 <script src="shared/vendor/xlsx.full.min.js"></script>
   <script src="shared/vendor/jspdf.umd.min.js"></script>
   <script src="azimuth/azimuth.js?v=20261102d"></script>
@@ -813,7 +829,8 @@
   <script src="drilling/drilling.js?v=20261102d"></script>
   <script src="boxplot/boxplot.js?v=20261102f"></script>
   <script src="shared/storage.js?v=20261102d"></script>
-  <script src="automl/automl.js?v=20261102l"></script>
+  <script src="automl/automl.js?v=20261108a"></script>
+  <script src="grabber/grabber.js?v=20261108a"></script>
   <script src="ai/ai.js?v=20261106b"></script>
 </body>
 </html>

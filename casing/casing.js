@@ -1659,7 +1659,8 @@
       drilling: { panel: "panel-drilling", actions: "actions-drilling", tab: "tab-drilling", title: "Drilling Summary" },
       boxplot: { panel: "panel-boxplot", actions: "actions-boxplot", tab: "tab-boxplot", title: "Box & Whisker" },
       ai: { panel: "panel-ai", actions: "actions-ai", tab: "tab-ai", title: "Saran AI" },
-      automl: { panel: "panel-automl", actions: "actions-automl", tab: "tab-automl", title: "AutoML" }
+      automl: { panel: "panel-automl", actions: "actions-automl", tab: "tab-automl", title: "AutoML" },
+      grabber: { panel: "panel-grabber", actions: null, tab: "tab-grabber", title: "Graph Grabber" }
     };
     const active = names[tab] ? tab : "azimuth";
     Object.keys(names).forEach((key) => {
@@ -1690,6 +1691,8 @@
     if (tabAi) tabAi.addEventListener("click", () => activate("ai"));
     const tabAm = document.getElementById("tab-automl");
     if (tabAm) tabAm.addEventListener("click", () => activate("automl"));
+    const tabGrabber = document.getElementById("tab-grabber");
+    if (tabGrabber) tabGrabber.addEventListener("click", () => activate("grabber"));
     document.getElementById("csg-formations").addEventListener("input", onField);
     document.getElementById("csg-formations").addEventListener("click", onClick);
     document.getElementById("csg-wells").addEventListener("input", onField);
