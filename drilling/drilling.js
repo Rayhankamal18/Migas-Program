@@ -2871,7 +2871,7 @@
     const data = {
       title: "Time vs Depth",
       well: "Sumur 3",
-      subtitle: "PERTAMINA PHE ONWJ | Rig PVD 3",
+      subtitle: "Contoh proyek | Rig contoh",
       td: 10303,
       tdTvd: 6824,
       endDay: 163,
@@ -3307,7 +3307,7 @@
     persist();
     renderAll();
     requestDraw();
-    setStatus("Contoh Sumur 3 dimuat. Formasi contoh hanya untuk tampilan. Casing mengikuti sumur Sumur 3 bila sudah ada di Casing Setting Depth.");
+    setStatus("Contoh Sumur 3 dimuat. Formasi contoh hanya untuk tampilan. Casing mengikuti Sumur 3 bila sudah ada di Casing Setting Depth.");
   }
 
   function clearAll() {
@@ -3885,7 +3885,7 @@
     bind();
     const panel = document.getElementById("panel-drilling");
     if (panel && !panel.hidden) draw();
-    setStatus(hadStored ? "Data drilling terakhir dibuka kembali." : "Contoh Sumur 3 dimuat. Formasi contoh hanya untuk tampilan. Casing mengikuti sumur Sumur 3 bila sudah ada di Casing Setting Depth.");
+    setStatus(hadStored ? "Data drilling terakhir dibuka kembali." : "Contoh Sumur 3 dimuat. Formasi contoh hanya untuk tampilan. Casing mengikuti Sumur 3 bila sudah ada di Casing Setting Depth.");
   }
 
   function bootState() {

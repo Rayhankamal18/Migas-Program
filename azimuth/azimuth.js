@@ -27,16 +27,16 @@ const PARIGI = [
 ];
 
 const WPA = [
-  { formation: "WPA, UPA", well: "WPA-01ST", azAwal: 308, azAkhir: 248, incAwal: 57, incAkhir: 81, color: "#C4A15A" },
-  { formation: "WPA, UPA", well: "WPA-02", azAwal: 342, azAkhir: 8, incAwal: 32, incAkhir: 73, color: "#A8B82E" },
-  { formation: "WPA, UPA", well: "WPA-03", azAwal: 308, azAkhir: 248, incAwal: 57, incAkhir: 81, color: "#2A3C8F" },
-  { formation: "WPA, UPA", well: "WPA-03ST", azAwal: 275, azAkhir: 242, incAwal: 65, incAkhir: 74, color: "#D31216" },
-  { formation: "WPA, UPA", well: "WPA-04", azAwal: 290, azAkhir: 262, incAwal: 51, incAkhir: 69, color: "#E39412" },
-  { formation: "WPA, UPA", well: "WPA-04ST", azAwal: 282, azAkhir: 264, incAwal: 57, incAkhir: 71, color: "#1AA392" },
-  { formation: "WPA, UPA", well: "UPA-15", azAwal: 262, azAkhir: 260, incAwal: 85, incAkhir: 83, color: "#3AABB0" },
-  { formation: "WPA, UPA", well: "UPA-15ST", azAwal: 260, azAkhir: 260, incAwal: 84, incAkhir: 84, color: "#D57A8A" },
-  { formation: "WPA, UPA", well: "UPA-16", azAwal: 283, azAkhir: 282, incAwal: 60, incAkhir: 73, color: "#A89888" },
-  { formation: "WPA, UPA", well: "UPA-16", azAwal: 282, azAkhir: 284, incAwal: 73, incAkhir: 80, color: "#8DAA14" }
+  { formation: "Formasi A", well: "Sumur 1", azAwal: 308, azAkhir: 248, incAwal: 57, incAkhir: 81, color: "#C4A15A" },
+  { formation: "Formasi A", well: "Sumur 2", azAwal: 342, azAkhir: 8, incAwal: 32, incAkhir: 73, color: "#A8B82E" },
+  { formation: "Formasi A", well: "Sumur 3", azAwal: 308, azAkhir: 248, incAwal: 57, incAkhir: 81, color: "#2A3C8F" },
+  { formation: "Formasi A", well: "Sumur 4", azAwal: 275, azAkhir: 242, incAwal: 65, incAkhir: 74, color: "#D31216" },
+  { formation: "Formasi A", well: "Sumur 5", azAwal: 290, azAkhir: 262, incAwal: 51, incAkhir: 69, color: "#E39412" },
+  { formation: "Formasi A", well: "Sumur 6", azAwal: 282, azAkhir: 264, incAwal: 57, incAkhir: 71, color: "#1AA392" },
+  { formation: "Formasi A", well: "Sumur 7", azAwal: 262, azAkhir: 260, incAwal: 85, incAkhir: 83, color: "#3AABB0" },
+  { formation: "Formasi A", well: "Sumur 8", azAwal: 260, azAkhir: 260, incAwal: 84, incAkhir: 84, color: "#D57A8A" },
+  { formation: "Formasi A", well: "Sumur 9", azAwal: 283, azAkhir: 282, incAwal: 60, incAkhir: 73, color: "#A89888" },
+  { formation: "Formasi A", well: "Sumur 10", azAwal: 282, azAkhir: 284, incAwal: 73, incAkhir: 80, color: "#8DAA14" }
 ];
 
 const state = {
@@ -1722,9 +1722,9 @@ function init() {
     loadDataset(WPA, {
       resetStyle: true,
       incMax: 95,
-      caption: "Gambar 4.9. Inklinasi dan Azimuth di Lapangan WPA, UPA.",
+      caption: "Gambar contoh. Inklinasi dan Azimuth di Formasi A.",
       captionTouched: true,
-      status: "Contoh laporan WPA dan UPA dimuat."
+      status: "Contoh Formasi A dimuat."
     });
   });
   document.getElementById("map-apply").addEventListener("click", applyMapping);
