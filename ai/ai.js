@@ -209,6 +209,7 @@
       tdTvd: numOrNull(item.tdTvd),
       color: item.color || "#F2D11A",
       includeOffsets: item.includeOffsets !== false,
+      analysisMeta: item.analysisMeta || null,
       casings: casings
     };
   }
@@ -358,6 +359,7 @@
     if (!draft) return null;
     draft.savedAt = (cache.casingSuggestion && cache.casingSuggestion.savedAt) || new Date().toISOString();
     draft.text = (cache.casingSuggestion && cache.casingSuggestion.text) || draft.text;
+    draft.analysisMeta = (cache.casingSuggestion && cache.casingSuggestion.analysisMeta) || draft.analysisMeta || null;
     cache.casingSuggestion = draft;
     saveCache();
     return draft;
@@ -379,7 +381,7 @@
           '<button type="button" class="btn ghost ai-csg-del" title="Hapus string">Hapus</button>' +
         "</div>" +
         '<label class="ai-csg-reason-label">Alasan usulan' +
-          '<textarea data-f="reason" rows="2" placeholder="Kenapa angka ini masuk akal berdasarkan offset/data">' +
+          '<textarea data-f="reason" rows="3" placeholder="Sebut offset, masalah di sekitar kedalaman, formasi, dan PP/FG bila ada">' +
             escHtml(c.reason || "") +
           "</textarea>" +
         "</label>" +
@@ -411,7 +413,14 @@
       '<div class="ai-csg-workbench">' +
         '<section class="ai-csg-editor">' +
           "<h3>" + escHtml(draft.wellName) + "</h3>" +
-          '<p class="micro">Angka usulan memakai rumus gambar yang sama dengan tab Casing Setting Depth. Edit di sini dulu; tab Casing belum berubah sampai Anda menyalin.</p>' +
+          '<p class="micro">Angka usulan memakai rumus gambar yang sama dengan tab Casing Setting Depth. Alasan tiap shoe mengacu offset, sebaran masalah, formasi, dan PP/FG bila ada. Edit di sini dulu; tab Casing belum berubah sampai Anda menyalin.</p>' +
+          (draft.analysisMeta
+            ? '<p class="micro">Cakupan analisis: ' +
+              (draft.analysisMeta.offsetWellCount || 0) + " offset, " +
+              (draft.analysisMeta.totalProblems || 0) + " masalah, PP di " +
+              (draft.analysisMeta.wellsWithPorePressure || 0) + " sumur, FG di " +
+              (draft.analysisMeta.wellsWithFractureGradient || 0) + " sumur.</p>"
+            : "") +
           '<div class="ai-csg-meta">' +
             '<label>Nama sumur<input id="ai-csg-name" type="text" value="' + escHtml(draft.wellName) + '" spellcheck="false" /></label>' +
             '<label>TD MD (' + unit + ')<input id="ai-csg-td-md" type="text" inputmode="decimal" value="' +
@@ -572,6 +581,315 @@
     }
   }
 
+  function sampleCurve(points, maxN) {
+    const list = Array.isArray(points) ? points : [];
+    const cleaned = list
+      .map(function (p) {
+        return {
+          depthTvd: numOrNull(p.depthTvd != null ? p.depthTvd : p.depth),
+          value: numOrNull(p.value != null ? p.value : p.ppg)
+        };
+      })
+      .filter(function (p) { return p.depthTvd != null && p.value != null; })
+      .sort(function (a, b) { return a.depthTvd - b.depthTvd; });
+    if (cleaned.length <= maxN) return cleaned;
+    const out = [];
+    for (let i = 0; i < maxN; i += 1) {
+      const idx = Math.round((i * (cleaned.length - 1)) / (maxN - 1));
+      out.push(cleaned[idx]);
+    }
+    return out;
+  }
+
+  function interpolateCurve(points, depthTvd) {
+    const pts = sampleCurve(points, 200);
+    if (!pts.length || depthTvd == null) return null;
+    if (depthTvd <= pts[0].depthTvd) return pts[0].value;
+    if (depthTvd >= pts[pts.length - 1].depthTvd) return pts[pts.length - 1].value;
+    for (let i = 0; i < pts.length - 1; i += 1) {
+      const a = pts[i];
+      const b = pts[i + 1];
+      if (depthTvd < a.depthTvd || depthTvd > b.depthTvd) continue;
+      if (b.depthTvd === a.depthTvd) return a.value;
+      const t = (depthTvd - a.depthTvd) / (b.depthTvd - a.depthTvd);
+      return a.value + t * (b.value - a.value);
+    }
+    return null;
+  }
+
+  function drillingByWellName(snap) {
+    const map = {};
+    if (!snap || !snap.drilling) return map;
+    let wells = [];
+    if (Array.isArray(snap.drilling.wells) && snap.drilling.wells.length) {
+      wells = snap.drilling.wells;
+    } else if (snap.drilling.well || (snap.drilling.events && snap.drilling.events.length)) {
+      wells = [{
+        name: snap.drilling.well || "Well",
+        td: snap.drilling.td,
+        tdTvd: snap.drilling.tdTvd,
+        formations: snap.drilling.formations,
+        events: snap.drilling.events
+      }];
+    }
+    wells.forEach(function (w) {
+      const key = String(w.name || "").trim().toLowerCase();
+      if (!key) return;
+      const problems = (w.events || [])
+        .map(function (e) {
+          const depthTvd = numOrNull(e.depthTvd);
+          const depthMd = numOrNull(e.depth);
+          return {
+            day: numOrNull(e.day),
+            depthMd: depthMd,
+            depthTvd: depthTvd != null ? depthTvd : depthMd,
+            category: String(e.category || "").trim() || "Masalah",
+            description: String(e.description || "").trim().slice(0, 180)
+          };
+        })
+        .filter(function (e) { return e.depthTvd != null || e.depthMd != null; })
+        .sort(function (a, b) {
+          return (a.depthTvd != null ? a.depthTvd : 0) - (b.depthTvd != null ? b.depthTvd : 0);
+        });
+      map[key] = {
+        name: w.name,
+        tdMd: numOrNull(w.td),
+        tdTvd: numOrNull(w.tdTvd),
+        formations: (w.formations || []).map(function (f) {
+          return {
+            name: f.name || "",
+            topTvd: numOrNull(f.topTvd != null ? f.topTvd : f.top),
+            baseTvd: numOrNull(f.baseTvd != null ? f.baseTvd : f.base)
+          };
+        }),
+        problems: problems,
+        problemCount: problems.length
+      };
+    });
+    return map;
+  }
+
+  function buildProblemBands(offsetWells, unit) {
+    const bandSize = unit === "m" ? 150 : 500;
+    const bands = {};
+    (offsetWells || []).forEach(function (w) {
+      (w.problems || []).forEach(function (p) {
+        const d = p.depthTvd != null ? p.depthTvd : p.depthMd;
+        if (d == null) return;
+        const top = Math.floor(d / bandSize) * bandSize;
+        const key = String(top);
+        if (!bands[key]) {
+          bands[key] = {
+            bandTopTvd: top,
+            bandBaseTvd: top + bandSize,
+            count: 0,
+            categories: {},
+            wells: {}
+          };
+        }
+        bands[key].count += 1;
+        bands[key].categories[p.category] = (bands[key].categories[p.category] || 0) + 1;
+        bands[key].wells[w.name] = (bands[key].wells[w.name] || 0) + 1;
+      });
+    });
+    return Object.keys(bands)
+      .map(function (k) {
+        const b = bands[k];
+        return {
+          bandTopTvd: b.bandTopTvd,
+          bandBaseTvd: b.bandBaseTvd,
+          count: b.count,
+          categories: b.categories,
+          wells: Object.keys(b.wells),
+          wellCounts: b.wells
+        };
+      })
+      .sort(function (a, b) { return b.count - a.count || a.bandTopTvd - b.bandTopTvd; })
+      .slice(0, 24);
+  }
+
+  function problemsNearDepth(offsetWells, depthTvd, window) {
+    const win = window || 400;
+    const hits = [];
+    (offsetWells || []).forEach(function (w) {
+      (w.problems || []).forEach(function (p) {
+        const d = p.depthTvd != null ? p.depthTvd : p.depthMd;
+        if (d == null || Math.abs(d - depthTvd) > win) return;
+        hits.push({
+          well: w.name,
+          depthTvd: d,
+          category: p.category,
+          description: p.description
+        });
+      });
+    });
+    hits.sort(function (a, b) { return Math.abs(a.depthTvd - depthTvd) - Math.abs(b.depthTvd - depthTvd); });
+    return hits;
+  }
+
+  function slimBoxplot(snap) {
+    if (!snap || !snap.boxplot) return null;
+    const plots = Array.isArray(snap.boxplot.plots) && snap.boxplot.plots.length
+      ? snap.boxplot.plots
+      : [snap.boxplot];
+    return plots.slice(0, 4).map(function (p) {
+      return {
+        title: p.title || p.name || "",
+        yLabel: p.yLabel || "",
+        columns: (p.columns || []).slice(0, 12).map(function (c) {
+          const vals = (c.values || []).filter(function (v) { return v != null && Number.isFinite(Number(v)); }).map(Number);
+          if (!vals.length) return { name: c.name || "", n: 0 };
+          vals.sort(function (a, b) { return a - b; });
+          const mid = vals[Math.floor(vals.length / 2)];
+          return {
+            name: c.name || "",
+            n: vals.length,
+            min: vals[0],
+            median: mid,
+            max: vals[vals.length - 1]
+          };
+        })
+      };
+    });
+  }
+
+  function buildCasingAnalysisPayload(snap, wellName, notes, unit) {
+    const drillMap = drillingByWellName(snap);
+    const formations = (snap.casing && Array.isArray(snap.casing.formations) ? snap.casing.formations : [])
+      .map(function (f) {
+        return {
+          name: f.name || "",
+          topTvd: numOrNull(f.topTvd),
+          baseTvd: numOrNull(f.baseTvd),
+          color: f.color || null
+        };
+      })
+      .filter(function (f) { return f.name || f.topTvd != null || f.baseTvd != null; });
+
+    const offsets = (snap.casing && Array.isArray(snap.casing.wells) ? snap.casing.wells : [])
+      .filter(function (w) {
+        return ((w.name || "").trim().toLowerCase() !== String(wellName || "").trim().toLowerCase());
+      })
+      .map(function (w) {
+        const key = String(w.name || "").trim().toLowerCase();
+        const drill = drillMap[key] || null;
+        const pp = sampleCurve(w.pp, 60);
+        const fg = sampleCurve(w.fg, 60);
+        return {
+          name: w.name,
+          tdMd: numOrNull(w.tdMd),
+          tdTvd: numOrNull(w.tdTvd),
+          casings: (w.casings || []).map(function (c) {
+            return {
+              name: c.name || "",
+              shoeMd: numOrNull(c.shoeMd),
+              shoeTvd: numOrNull(c.shoeTvd),
+              kind: c.kind === "liner" ? "liner" : "casing",
+              topTvd: numOrNull(c.topTvd),
+              style: c.style || "solid"
+            };
+          }),
+          porePressurePpg: pp,
+          fractureGradientPpg: fg,
+          hasPpFg: !!(pp.length || fg.length),
+          problems: drill ? drill.problems.slice(0, 80) : [],
+          problemCount: drill ? drill.problemCount : 0,
+          drillingFormations: drill ? drill.formations : [],
+          drillingTdMd: drill ? drill.tdMd : null,
+          drillingTdTvd: drill ? drill.tdTvd : null
+        };
+      });
+
+    const problemBands = buildProblemBands(offsets, unit);
+    const withPp = offsets.filter(function (w) { return w.porePressurePpg.length; }).length;
+    const withFg = offsets.filter(function (w) { return w.fractureGradientPpg.length; }).length;
+    const totalProblems = offsets.reduce(function (n, w) { return n + (w.problemCount || 0); }, 0);
+
+    return {
+      proposedWell: wellName,
+      designNotes: notes,
+      unit: unit,
+      analysisGoals: [
+        "Usulkan shoe casing/liner yang praktis untuk sumur baru berdasarkan seluruh offset.",
+        "Manfaatkan persebaran masalah drilling per kedalaman (losses, kick, stuck, dll).",
+        "Jika PP/FG tersedia, pakai untuk menjustifikasi kedalaman shoe (cover PP, margin ke FG).",
+        "PP/FG bersifat opsional: jika kosong, jelaskan keterbatasan dan andalkan offset shoe + masalah + formasi."
+      ],
+      formations: formations,
+      offsetWells: offsets,
+      problemDepthBands: problemBands,
+      mudOrPropertyDistributions: slimBoxplot(snap),
+      dataCoverage: {
+        offsetWellCount: offsets.length,
+        wellsWithProblems: offsets.filter(function (w) { return w.problemCount > 0; }).length,
+        totalProblems: totalProblems,
+        wellsWithPorePressure: withPp,
+        wellsWithFractureGradient: withFg,
+        formationCount: formations.length
+      }
+    };
+  }
+
+  function demoReasonForShoe(name, mid, arr, unit, offsets, formations) {
+    const wells = Array.from(new Set(arr.map(function (x) { return x.from; }).filter(Boolean)));
+    const vals = arr.map(function (x) { return x.tvd; });
+    const min = vals[0];
+    const max = vals[vals.length - 1];
+    const near = problemsNearDepth(offsets, mid.tvd, unit === "m" ? 120 : 400).slice(0, 6);
+    const catCount = {};
+    near.forEach(function (p) {
+      catCount[p.category] = (catCount[p.category] || 0) + 1;
+    });
+    const catText = Object.keys(catCount)
+      .sort(function (a, b) { return catCount[b] - catCount[a]; })
+      .slice(0, 4)
+      .map(function (c) { return c + "×" + catCount[c]; })
+      .join(", ");
+
+    let fmHit = null;
+    (formations || []).forEach(function (f) {
+      if (f.topTvd == null || f.baseTvd == null) return;
+      if (mid.tvd >= f.topTvd && mid.tvd <= f.baseTvd) fmHit = f.name || fmHit;
+    });
+
+    let ppVals = [];
+    let fgVals = [];
+    (offsets || []).forEach(function (w) {
+      const pp = interpolateCurve(w.porePressurePpg, mid.tvd);
+      const fg = interpolateCurve(w.fractureGradientPpg, mid.tvd);
+      if (pp != null) ppVals.push(pp);
+      if (fg != null) fgVals.push(fg);
+    });
+    ppVals.sort(function (a, b) { return a - b; });
+    fgVals.sort(function (a, b) { return a - b; });
+
+    let reason =
+      "Median shoe TVD " + Math.round(mid.tvd) + " " + unit + " dari " + arr.length +
+      " string sejenis di offset" +
+      (wells.length ? " (" + wells.slice(0, 5).join(", ") + (wells.length > 5 ? ", …" : "") + ")" : "") +
+      "; rentang " + Math.round(min) + "–" + Math.round(max) + " " + unit + ".";
+    if (fmHit) reason += " Berada di/sekitar formasi " + fmHit + ".";
+    if (near.length) {
+      reason +=
+        " Di sekitar kedalaman ini ada " + near.length + " masalah offset" +
+        (catText ? " (" + catText + ")" : "") +
+        " — shoe dipilih agar interval bermasalah bisa diisolasi sebelum lanjut pengeboran.";
+    } else {
+      reason += " Tidak ada konsentrasi masalah signifikan di sekitar shoe ini pada data offset yang tersedia.";
+    }
+    if (ppVals.length || fgVals.length) {
+      const ppMid = ppVals.length ? ppVals[Math.floor(ppVals.length / 2)].toFixed(2) : null;
+      const fgMid = fgVals.length ? fgVals[Math.floor(fgVals.length / 2)].toFixed(2) : null;
+      reason += " PP/FG opsional di kedalaman ini";
+      if (ppMid) reason += ": PP≈" + ppMid + " ppg";
+      if (fgMid) reason += (ppMid ? ", " : ": ") + "FG≈" + fgMid + " ppg";
+      reason += " (estimasi dari kurva offset) — pastikan MW window dan kick tolerance tetap aman.";
+    } else {
+      reason += " PP/FG belum tersedia di offset; justifikasi utama dari analogi shoe + sebaran masalah/formasi.";
+    }
+    return reason;
+  }
+
   /** Local demo replies — no API key / no internet LLM needed (uji UI saja). */
   function demoCompletion(messages) {
     const user = (messages || []).filter(function (m) { return m.role === "user"; }).pop();
@@ -585,7 +903,9 @@
       const name = (payload && payload.proposedWell) || "Proposed Well";
       const notes = (payload && payload.designNotes) || "";
       const offsets = (payload && payload.offsetWells) || [];
+      const formations = (payload && payload.formations) || [];
       const unit = (payload && payload.unit) === "m" ? "m" : "ft";
+      const coverage = (payload && payload.dataCoverage) || {};
       const shoes = [];
       const tdCandidates = [];
       offsets.forEach(function (w) {
@@ -613,24 +933,16 @@
         .map(function (k) {
           const arr = byKind[k].slice().sort(function (a, b) { return a.tvd - b.tvd; });
           const mid = arr[Math.floor(arr.length / 2)];
-          const vals = arr.map(function (x) { return x.tvd; });
-          const min = vals[0];
-          const max = vals[vals.length - 1];
-          const wells = Array.from(new Set(arr.map(function (x) { return x.from; }).filter(Boolean)));
           return {
             name: arr[0].name || k,
             shoeTvd: Math.round(mid.tvd),
             shoeMd: Math.round(mid.md),
             kind: mid.kind || "casing",
-            reason:
-              "Median TVD dari " + arr.length + " string sejenis di offset" +
-              (wells.length ? " (" + wells.slice(0, 4).join(", ") + (wells.length > 4 ? ", …" : "") + ")" : "") +
-              ": rentang " + Math.round(min) + "–" + Math.round(max) + " " + unit +
-              ". Angka ini selaras dengan praktik offset; validasi PP/FG dan kick tolerance sebelum final."
+            reason: demoReasonForShoe(arr[0].name || k, mid, arr, unit, offsets, formations)
           };
         })
         .sort(function (a, b) { return a.shoeTvd - b.shoeTvd; })
-        .slice(0, 6);
+        .slice(0, 8);
       if (!suggested.length) {
         suggested = [
           { name: "Conductor", shoeTvd: 300, shoeMd: 300, kind: "casing", reason: "Nilai demo default (tidak ada offset); ganti dengan data proyek." },
@@ -643,6 +955,10 @@
       const tdTvd = tdCandidates.length
         ? Math.round(tdCandidates[Math.floor(tdCandidates.length / 2)])
         : (suggested[suggested.length - 1].shoeTvd + 200);
+      const bands = (payload && payload.problemDepthBands) || [];
+      const hot = bands.slice(0, 3).map(function (b) {
+        return b.bandTopTvd + "–" + b.bandBaseTvd + " " + unit + " (" + b.count + " masalah)";
+      }).join("; ");
       return JSON.stringify({
         wellName: name,
         unit: unit,
@@ -650,10 +966,16 @@
         tdMd: tdTvd,
         summary:
           "[DEMO · tanpa API key] Usulan casing untuk " + name +
-          " disusun dari median shoe TVD offset wells" +
-          (offsets.length ? " (" + offsets.length + " sumur)" : "") +
-          (notes ? ", catatan: " + notes : "") +
-          ". Bukan rekomendasi engineering final — validasi dengan PP/FG, kick tolerance, dan standar perusahaan.",
+          " memakai analogi shoe offset" +
+          (coverage.offsetWellCount ? " (" + coverage.offsetWellCount + " sumur)" : "") +
+          ", sebaran masalah drilling" +
+          (coverage.totalProblems != null ? " (" + coverage.totalProblems + " event)" : "") +
+          (hot ? "; hotspot: " + hot : "") +
+          (coverage.wellsWithPorePressure || coverage.wellsWithFractureGradient
+            ? ", serta PP/FG pada " + (coverage.wellsWithPorePressure || 0) + "/" + (coverage.wellsWithFractureGradient || 0) + " sumur"
+            : ", tanpa PP/FG lengkap") +
+          (notes ? ". Catatan desain: " + notes : ".") +
+          " Bukan rekomendasi engineering final — validasi kick tolerance dan standar perusahaan.",
         casings: suggested
       });
     }
@@ -680,7 +1002,62 @@
     );
   }
 
-  async function chatCompletion(messages) {
+  function migasApiRoot() {
+    const stored = (localStorage.getItem("migas-api-base") || "").trim().replace(/\/$/, "");
+    if (stored) return stored;
+    if (typeof location !== "undefined" && location.protocol && location.protocol !== "file:") {
+      return location.origin;
+    }
+    return "http://127.0.0.1:5055";
+  }
+
+  function migasApiHeaders(json) {
+    const headers = {};
+    if (json) headers["Content-Type"] = "application/json";
+    const tok = (localStorage.getItem("migas-api-token") || "").trim();
+    // Ignore the placeholder text from the settings field.
+    if (tok && tok.toLowerCase() !== "shared secret") headers["X-Migas-Token"] = tok;
+    return headers;
+  }
+
+  async function postChat(url, headers, body) {
+    // Prefer local Migas server proxy: free gateways like NbGate block browser CORS
+    // (only allow their own website). Finance apps work because they call from backend.
+    const proxyUrl = migasApiRoot() + "/api/ai/chat";
+    const proxyHeaders = migasApiHeaders(true);
+    const forwardHeaders = {};
+    Object.keys(headers || {}).forEach(function (k) {
+      if (/^(content-type|authorization)$/i.test(k)) return;
+      forwardHeaders[k] = headers[k];
+    });
+    try {
+      const proxied = await fetch(proxyUrl, {
+        method: "POST",
+        headers: proxyHeaders,
+        body: JSON.stringify({
+          url: url,
+          apiKey: settings.apiKey,
+          body: body,
+          headers: forwardHeaders
+        })
+      });
+      return proxied;
+    } catch (proxyErr) {
+      // Fall back to direct browser call (works for providers that allow CORS).
+      try {
+        return await fetch(url, { method: "POST", headers: headers, body: JSON.stringify(body) });
+      } catch (directErr) {
+        throw new Error(
+          "Failed to fetch. Gateway memblokir panggilan dari browser (CORS). " +
+          "Jalankan aplikasi lewat Start_Migas / server lokal supaya request lewat proxy, " +
+          "lalu uji lagi. Detail: " + (proxyErr && proxyErr.message ? proxyErr.message : proxyErr)
+        );
+      }
+    }
+  }
+
+  async function chatCompletion(messages, options) {
+    const opts = options || {};
     if (isDemoProvider()) {
       // slight delay so UI status feels real
       await new Promise(function (r) { setTimeout(r, 350); });
@@ -700,15 +1077,17 @@
     const body = {
       model: settings.model || "gpt-4o-mini",
       messages,
-      temperature: 0.3
+      temperature: opts.temperature != null ? opts.temperature : 0.3
     };
-    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+    if (opts.maxTokens) body.max_tokens = opts.maxTokens;
+    const res = await postChat(url, headers, body);
     if (!res.ok) {
       const errText = await res.text();
       if (res.status === 404) {
         throw new Error(
           "Endpoint tidak ditemukan (404) di " + url +
           ". Isi Base URL saja, contoh https://nama-penyedia/v1 (path /chat/completions ditambah otomatis). " +
+          "Cek juga Model ID di dashboard penyedia (contoh NbGate free: Gregv5/deepseek-v4.1-flash-free). " +
           "Detail: " + errText.slice(0, 180)
         );
       }
@@ -799,51 +1178,42 @@
     const notes = ((document.getElementById("ai-proposed-notes") || {}).value || "").trim();
     const snap = collectProjectSnapshot();
     const unit = (snap.casing && snap.casing.unit) === "m" ? "m" : "ft";
-    setStatus("ai-casing-status", "Menganalisis offset wells...");
+    setStatus("ai-casing-status", "Menganalisis offset, masalah drilling, formasi, dan PP/FG...");
     try {
-      const offsets = (snap.casing && Array.isArray(snap.casing.wells))
-        ? snap.casing.wells
-            .filter(function (w) {
-              return ((w.name || "").trim().toLowerCase() !== wellName.toLowerCase());
-            })
-            .map((w) => ({
-              name: w.name,
-              tdTvd: w.tdTvd,
-              tdMd: w.tdMd,
-              casings: (w.casings || []).map((c) => ({
-                name: c.name,
-                shoeTvd: c.shoeTvd,
-                shoeMd: c.shoeMd,
-                kind: c.kind,
-                topTvd: c.topTvd
-              })),
-              pp: (w.pp || []).slice(0, 30),
-              fg: (w.fg || []).slice(0, 30)
-            }))
-        : [];
-      const formations = snap.casing && snap.casing.formations ? snap.casing.formations : [];
-      const text = await chatCompletion([
-        {
-          role: "system",
-          content:
-            "You are a senior well engineer. Propose casing setting depths for a new well from offset well data. " +
-            "Reply with ONLY valid JSON (no markdown) matching: " +
-            '{"wellName":string,"unit":"ft"|"m","tdMd":number|null,"tdTvd":number|null,"summary":string,' +
-            '"casings":[{"name":string,"shoeMd":number,"shoeTvd":number,"kind":"casing"|"liner","topTvd":number|null,"reason":string}]}. ' +
-            "Each reason must explain in Indonesian why that depth is sensible vs offset data (median/range, formation, PP/FG if relevant). " +
-            "Be practical. Assume vertical well (shoeMd≈shoeTvd) unless offsets show otherwise. Units must match input unit."
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            proposedWell: wellName,
-            designNotes: notes,
-            unit: unit,
-            formations: formations,
-            offsetWells: offsets
-          })
-        }
-      ]);
+      const analysis = buildCasingAnalysisPayload(snap, wellName, notes, unit);
+      if (!analysis.offsetWells.length) {
+        throw new Error("Belum ada sumur offset di tab Casing Setting Depth untuk dianalisis.");
+      }
+      const text = await chatCompletion(
+        [
+          {
+            role: "system",
+            content:
+              "You are a principal drilling / well design engineer with strong casing-seat judgment. " +
+              "Use ALL provided project evidence: offset casing shoes, drilling problem events by depth and category, " +
+              "formation tops/bases, optional pore pressure (PP) and fracture gradient (FG), and any mud/property distributions. " +
+              "PP/FG are optional enhancers — if missing, say so and rely on offset shoes + problem clustering + formations; do not invent PP/FG numbers. " +
+              "Think like a design review: isolate problem-prone intervals, set shoes where offsets repeatedly set casing, " +
+              "and when PP/FG exist justify that the seat covers pore pressure with a workable margin to fracture gradient / kick tolerance. " +
+              "Reply with ONLY valid JSON (no markdown, no commentary outside JSON) matching: " +
+              '{"wellName":string,"unit":"ft"|"m","tdMd":number|null,"tdTvd":number|null,"summary":string,' +
+              '"casings":[{"name":string,"shoeMd":number,"shoeTvd":number,"kind":"casing"|"liner","topTvd":number|null,"reason":string}]}. ' +
+              "summary: 2–4 Indonesian sentences covering overall design logic, key problem depth bands, and whether PP/FG informed the seats. " +
+              "Each reason MUST be Indonesian, specific, and evidence-based: cite offset well names, shoe ranges, nearby problem categories/depths, " +
+              "formation names when relevant, and PP/FG values only if present in the JSON. Avoid generic filler. " +
+              "Propose a complete practical string set (typically conductor/surface/intermediate/production or matching offset naming). " +
+              "Assume vertical well (shoeMd≈shoeTvd) unless offsets clearly show otherwise. Units must match input unit."
+          },
+          {
+            role: "user",
+            content:
+              "Analisis dataset proyek berikut dan usulkan casing setting depth untuk sumur proposed. " +
+              "Manfaatkan persebaran masalah di tiap sumur/kedalaman dan PP/FG bila ada.\n" +
+              JSON.stringify(analysis)
+          }
+        ],
+        { temperature: 0.25, maxTokens: 3500 }
+      );
       const draft = parseCasingProposal(text, wellName, unit);
       if (!draft || !draft.casings.length) {
         throw new Error("AI tidak mengembalikan angka casing yang bisa diparse. Coba lagi atau ganti provider.");
@@ -851,10 +1221,17 @@
       draft.savedAt = new Date().toISOString();
       if (!draft.text) draft.text = String(text || "").trim();
       draft.includeOffsets = true;
+      draft.analysisMeta = analysis.dataCoverage;
       cache.casingSuggestion = draft;
       saveCache();
       renderCasingResults();
-      setStatus("ai-casing-status", "Usulan angka casing siap diedit di tab AI.");
+      const cov = analysis.dataCoverage || {};
+      setStatus(
+        "ai-casing-status",
+        "Usulan siap. Offset: " + (cov.offsetWellCount || 0) +
+          ", masalah: " + (cov.totalProblems || 0) +
+          ", PP/FG: " + (cov.wellsWithPorePressure || 0) + "/" + (cov.wellsWithFractureGradient || 0) + " sumur."
+      );
     } catch (err) {
       setStatus("ai-casing-status", err.message || String(err));
     }
@@ -887,7 +1264,7 @@
     if (hint) {
       hint.textContent = demo
         ? "Mode Demo: uji Generate tanpa beli API. Jawaban dilabeli [DEMO] dan memakai data sumur lokal."
-        : "Tempel API Key dan Base URL dari penyedia (biasanya berakhir /v1). Kosongkan Base URL untuk memakai endpoint bawaan provider. Lalu Simpan dan Uji AI Suggestion.";
+        : "Tempel API Key + Base URL (/v1). Gateway gratis seperti NbGate memblokir browser (CORS); Migas memanggil lewat server lokal otomatis — jalankan via Start_Migas. Model harus ID resmi dari dashboard (bukan nama tampilan).";
     }
   }
 

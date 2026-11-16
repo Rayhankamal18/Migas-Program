@@ -647,7 +647,7 @@
       </section>
       <section>
         <h2>2. Usulan casing depth</h2>
-        <p class="micro">Offset wells di proyek dipakai untuk mengusulkan angka shoe. Hasil muncul di panel kanan (bisa diedit + pratinjau rumus Casing), lalu diekspor atau disalin ke tab Casing Setting Depth.</p>
+        <p class="micro">AI menganalisis shoe offset, sebaran masalah drilling per kedalaman, formasi, dan PP/FG (opsional). Hasil angka + alasan muncul di kanan; bisa diedit, diekspor, atau disalin ke tab Casing Setting Depth.</p>
         <label>Nama sumur proposed
           <input id="ai-proposed-name" type="text" placeholder="Sumur 5" spellcheck="false" />
         </label>
@@ -712,7 +712,7 @@
           <label>Base URL (dari penyedia API)
             <input id="set-endpoint" type="text" placeholder="https://api.openai.com/v1" spellcheck="false" />
           </label>
-          <p class="micro">Tempel Base URL saat beli key (biasanya berakhir <code>/v1</code>). Path <code>/chat/completions</code> ditambahkan otomatis. Kosongkan untuk endpoint bawaan provider. Jangan diisi di “API base URL” di bawah — itu untuk server aplikasi.</p>
+          <p class="micro">Tempel Base URL (biasanya berakhir <code>/v1</code>). Path <code>/chat/completions</code> ditambah otomatis. Gateway gratis (NbGate, dll.) sering memblokir panggilan dari browser — aplikasi mengirim lewat server lokal, jadi jalankan lewat <code>Start_Migas</code>, bukan buka file HTML langsung. Model: salin ID resmi dari dashboard (contoh free NbGate: <code>Gregv5/deepseek-v4.1-flash-free</code>). Kolom “API base URL” di bawah untuk server aplikasi, bukan AI.</p>
         </section>
         <section class="field-group">
           <h3>Server &amp; folder data</h3>
@@ -835,6 +835,6 @@
   <script src="shared/storage.js?v=20261102d"></script>
   <script src="automl/automl.js?v=20261108a"></script>
   <script src="grabber/grabber.js?v=20261108a"></script>
-  <script src="ai/ai.js?v=20261106b"></script>
+  <script src="ai/ai.js?v=20261116b"></script>
 </body>
 </html>

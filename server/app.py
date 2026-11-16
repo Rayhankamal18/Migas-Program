@@ -132,6 +132,86 @@ def file_info(path: Path):
     }
 
 
+@app.post("/api/ai/chat")
+def ai_chat_proxy():
+    """Proxy OpenAI-compatible chat completions.
+
+    Many free gateways (e.g. NbGate) only allow CORS from their own site, so the
+    browser cannot call them directly. Finance-style apps work because they call
+    from a backend; this endpoint does the same for Migas portable/local server.
+    """
+    denied = require_auth()
+    if denied:
+        return denied
+
+    payload = request.get_json(silent=True) or {}
+    url = str(payload.get("url") or "").strip()
+    api_key = str(payload.get("apiKey") or "").strip()
+    body = payload.get("body")
+    extra_headers = payload.get("headers") or {}
+
+    if not url:
+        return jsonify({"ok": False, "error": "url required"}), 400
+    if not api_key:
+        return jsonify({"ok": False, "error": "apiKey required"}), 400
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
+
+    from urllib.parse import urlparse
+    import urllib.error
+    import urllib.request
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return jsonify({"ok": False, "error": "Only http/https AI endpoints are allowed."}), 400
+    if not parsed.netloc:
+        return jsonify({"ok": False, "error": "Invalid AI endpoint URL."}), 400
+    path_l = (parsed.path or "").lower()
+    if "chat/completions" not in path_l and not path_l.endswith("/completions"):
+        return jsonify({
+            "ok": False,
+            "error": "URL must be an OpenAI-compatible chat completions endpoint.",
+        }), 400
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+        "User-Agent": "MigasProgram-AI-Proxy/1.0",
+    }
+    if isinstance(extra_headers, dict):
+        for key, value in extra_headers.items():
+            k = str(key or "").strip()
+            if not k:
+                continue
+            # Do not let the client override hop-by-hop / auth headers.
+            if k.lower() in ("authorization", "content-length", "host", "connection"):
+                continue
+            headers[k] = str(value)
+
+    raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(url, data=raw, method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            resp_body = resp.read()
+            content_type = resp.headers.get("Content-Type") or "application/json"
+            return app.response_class(resp_body, status=resp.status, mimetype=content_type.split(";")[0].strip())
+    except urllib.error.HTTPError as exc:
+        err_body = exc.read() if hasattr(exc, "read") else b""
+        content_type = exc.headers.get("Content-Type") if exc.headers else "application/json"
+        if err_body:
+            return app.response_class(
+                err_body,
+                status=exc.code,
+                mimetype=(content_type or "application/json").split(";")[0].strip(),
+            )
+        return jsonify({"ok": False, "error": f"Upstream HTTP {exc.code}: {exc.reason}"}), exc.code
+    except urllib.error.URLError as exc:
+        return jsonify({"ok": False, "error": f"Tidak bisa menghubungi AI provider: {exc.reason}"}), 502
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Proxy AI gagal: {exc}"}), 502
+
+
 @app.get("/api/health")
 def health():
     return jsonify({
